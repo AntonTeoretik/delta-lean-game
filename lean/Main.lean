@@ -1,4 +1,2 @@
-
-theorem bad (A B : Prop) : A -> B := by
-  intro h
-  exact h
+theorem theorem1 : True := by
+  1

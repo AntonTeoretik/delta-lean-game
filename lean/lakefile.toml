@@ -1,7 +1,0 @@
-name = "DeltaLeanGame"
-version = "0.1.0"
-defaultTargets = ["DeltaLeanGame"]
-
-[[lean_exe]]
-name = "DeltaLeanGame"
-root = "Main"

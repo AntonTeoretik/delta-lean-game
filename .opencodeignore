@@ -1,0 +1,12 @@
+# директории
+node_modules/
+dist/
+build/
+
+# файлы
+*.log
+*.tmp
+
+# конкретные
+.env
+secrets.json

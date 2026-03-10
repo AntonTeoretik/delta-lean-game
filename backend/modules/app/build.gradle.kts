@@ -15,8 +15,16 @@ dependencies {
   implementation("io.ktor:ktor-server-status-pages:2.3.7")
   implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.7")
   implementation("ch.qos.logback:logback-classic:1.4.14")
+
+  testImplementation(kotlin("test-junit5"))
+  testImplementation("io.ktor:ktor-server-test-host:2.3.7")
+  testImplementation("io.mockk:mockk:1.13.10")
 }
 
 application {
   mainClass.set("com.deltalean.app.MainKt")
+}
+
+tasks.test {
+  useJUnitPlatform()
 }

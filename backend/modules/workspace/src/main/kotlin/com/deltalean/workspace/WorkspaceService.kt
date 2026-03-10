@@ -45,7 +45,7 @@ class WorkspaceService(
     return normalized
   }
 
-  fun toRelativePath(path: Path): String {
+  private fun toRelativePath(path: Path): String {
     val normalized = path.toAbsolutePath().normalize()
     require(normalized.startsWith(root)) { "Path is outside workspace root" }
     return root.relativize(normalized).toString().replace('\\', '/')

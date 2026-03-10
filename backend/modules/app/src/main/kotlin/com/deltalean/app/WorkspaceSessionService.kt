@@ -14,7 +14,9 @@ import java.nio.file.Path
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-class WorkspaceSessionService {
+class WorkspaceSessionService(
+  private val sessionFactory: () -> LeanSession = { LeanSession() }
+) {
   private val mutex = Mutex()
   private var active: ActiveWorkspace? = null
 
@@ -25,7 +27,7 @@ class WorkspaceSessionService {
 
     val workspaceService = WorkspaceService(workspaceRoot)
     val leanFiles = workspaceService.listLeanFiles()
-    val leanSession = LeanSession()
+    val leanSession = sessionFactory()
 
     mutex.withLock {
       active?.session?.stop()

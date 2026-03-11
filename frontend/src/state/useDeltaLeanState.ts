@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react'
 import { backendClient } from '../api/backendClient'
-import type { DiagnosticItem, FileDiagnostics, FileNode, NodeStatus } from '../model/types'
+import type { DiagnosticItem, FileDiagnostics, NodeStatus } from '../model/types'
 
 interface DeltaLeanState {
   workspaceRoot: string
-  nodes: FileNode[]
-  selectedPath: string | null
+  files: string[]
+  activeFilePath: string | null
+  activeFileStatus: NodeStatus
+  isNodeOpened: boolean
   editorContent: string
-  selectedDiagnostics: DiagnosticItem[]
+  activeDiagnostics: DiagnosticItem[]
   diagnosticsMap: Record<string, DiagnosticItem[]>
   isOpeningWorkspace: boolean
   isLoadingFile: boolean
@@ -18,31 +20,13 @@ interface DeltaLeanState {
 
 interface DeltaLeanActions {
   setWorkspaceRoot: (root: string) => void
+  setWorkspaceRootFromDirectorySelection: (files: FileList | null) => void
   openWorkspace: () => Promise<void>
-  selectNode: (path: string) => Promise<void>
-  moveNode: (path: string, x: number, y: number) => void
+  selectFile: (path: string) => void
+  openActiveNode: () => Promise<void>
   setEditorContent: (value: string) => void
   saveSelectedFile: () => Promise<void>
   clearError: () => void
-}
-
-const NODE_WIDTH = 190
-const NODE_HEIGHT = 88
-const NODE_GAP_X = 24
-const NODE_GAP_Y = 24
-const COLUMNS = 4
-
-function buildGridNodes(paths: string[], diagnosticsMap: Record<string, DiagnosticItem[]>): FileNode[] {
-  return paths.map((path, index) => {
-    const row = Math.floor(index / COLUMNS)
-    const col = index % COLUMNS
-    return {
-      path,
-      x: 24 + col * (NODE_WIDTH + NODE_GAP_X),
-      y: 24 + row * (NODE_HEIGHT + NODE_GAP_Y),
-      status: statusFromDiagnostics(diagnosticsMap[path] ?? []),
-    }
-  })
 }
 
 function mapDiagnostics(files: FileDiagnostics[]): Record<string, DiagnosticItem[]> {
@@ -70,8 +54,9 @@ function statusFromDiagnostics(diagnostics: DiagnosticItem[]): NodeStatus {
 
 export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
   const [workspaceRoot, setWorkspaceRoot] = useState('')
-  const [nodes, setNodes] = useState<FileNode[]>([])
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [files, setFiles] = useState<string[]>([])
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
+  const [isNodeOpened, setIsNodeOpened] = useState(false)
   const [editorContent, setEditorContent] = useState('')
   const [lastSavedContent, setLastSavedContent] = useState('')
   const [diagnosticsMap, setDiagnosticsMap] = useState<Record<string, DiagnosticItem[]>>({})
@@ -80,14 +65,39 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const selectedDiagnostics = useMemo(
-    () => (selectedPath ? diagnosticsMap[selectedPath] ?? [] : []),
-    [diagnosticsMap, selectedPath],
+  const activeDiagnostics = useMemo(
+    () => (activeFilePath ? diagnosticsMap[activeFilePath] ?? [] : []),
+    [diagnosticsMap, activeFilePath],
   )
 
-  const isDirty = selectedPath !== null && editorContent !== lastSavedContent
+  const activeFileStatus = useMemo(
+    () => statusFromDiagnostics(activeDiagnostics),
+    [activeDiagnostics],
+  )
+
+  const isDirty = activeFilePath !== null && isNodeOpened && editorContent !== lastSavedContent
 
   const clearError = () => setError(null)
+
+  const setWorkspaceRootFromDirectorySelection = (selectedFiles: FileList | null) => {
+    if (!selectedFiles || selectedFiles.length === 0) {
+      return
+    }
+
+    const first = selectedFiles[0] as File & { path?: string }
+    const nativePath = first.path
+    if (!nativePath) {
+      setError('Браузер не дает абсолютный путь. Укажите workspace вручную.')
+      return
+    }
+
+    const relativePart = first.webkitRelativePath
+    const root = relativePart
+      ? nativePath.slice(0, Math.max(0, nativePath.length - relativePart.length)).replace(/\\$/, '')
+      : nativePath
+
+    setWorkspaceRoot(root.replace(/\\/g, '/'))
+  }
 
   const openWorkspace = async () => {
     if (!workspaceRoot.trim()) {
@@ -107,8 +117,9 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
 
       const mappedDiagnostics = mapDiagnostics(diagnostics)
       setDiagnosticsMap(mappedDiagnostics)
-      setNodes(buildGridNodes(paths, mappedDiagnostics))
-      setSelectedPath(null)
+      setFiles(paths)
+      setActiveFilePath(paths[0] ?? null)
+      setIsNodeOpened(false)
       setEditorContent('')
       setLastSavedContent('')
     } catch (e) {
@@ -118,14 +129,25 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     }
   }
 
-  const selectNode = async (path: string) => {
-    setSelectedPath(path)
+  const selectFile = (path: string) => {
+    setActiveFilePath(path)
+    setIsNodeOpened(false)
+    setEditorContent('')
+    setLastSavedContent('')
+  }
+
+  const openActiveNode = async () => {
+    if (!activeFilePath) {
+      return
+    }
+
     setIsLoadingFile(true)
     setError(null)
     try {
-      const file = await backendClient.getFile(path)
+      const file = await backendClient.getFile(activeFilePath)
       setEditorContent(file.content)
       setLastSavedContent(file.content)
+      setIsNodeOpened(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить файл.')
     } finally {
@@ -133,32 +155,20 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     }
   }
 
-  const moveNode = (path: string, x: number, y: number) => {
-    setNodes((previous) =>
-      previous.map((node) => (node.path === path ? { ...node, x, y } : node)),
-    )
-  }
-
   const saveSelectedFile = async () => {
-    if (!selectedPath) {
+    if (!activeFilePath || !isNodeOpened) {
       return
     }
 
     setIsSaving(true)
     setError(null)
     try {
-      await backendClient.updateFile(selectedPath, editorContent)
+      await backendClient.updateFile(activeFilePath, editorContent)
       setLastSavedContent(editorContent)
 
       const diagnostics = await backendClient.getDiagnostics()
       const mappedDiagnostics = mapDiagnostics(diagnostics)
       setDiagnosticsMap(mappedDiagnostics)
-      setNodes((previous) =>
-        previous.map((node) => ({
-          ...node,
-          status: statusFromDiagnostics(mappedDiagnostics[node.path] ?? []),
-        })),
-      )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось сохранить файл.')
     } finally {
@@ -168,10 +178,12 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
 
   return {
     workspaceRoot,
-    nodes,
-    selectedPath,
+    files,
+    activeFilePath,
+    activeFileStatus,
+    isNodeOpened,
     editorContent,
-    selectedDiagnostics,
+    activeDiagnostics,
     diagnosticsMap,
     isOpeningWorkspace,
     isLoadingFile,
@@ -179,9 +191,10 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     isDirty,
     error,
     setWorkspaceRoot,
+    setWorkspaceRootFromDirectorySelection,
     openWorkspace,
-    selectNode,
-    moveNode,
+    selectFile,
+    openActiveNode,
     setEditorContent,
     saveSelectedFile,
     clearError,

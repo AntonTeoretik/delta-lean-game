@@ -1,34 +1,92 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
 import './App.css'
+import { WorldScene } from './scene/WorldScene'
+import { useDeltaLeanState } from './state/useDeltaLeanState'
+import { DiagnosticsPanel } from './ui/DiagnosticsPanel'
+import { EditorPanel } from './ui/EditorPanel'
+import { FileListPanel } from './ui/FileListPanel'
+import { WorkspaceToolbar } from './ui/WorkspaceToolbar'
 
 function App() {
-  const [count, setCount] = useState(0)
+  const {
+    workspaceRoot,
+    files,
+    activeFilePath,
+    activeFileStatus,
+    isNodeOpened,
+    activeDiagnostics,
+    diagnosticsMap,
+    editorContent,
+    isOpeningWorkspace,
+    isLoadingFile,
+    isSaving,
+    isDirty,
+    error,
+    setWorkspaceRoot,
+    setWorkspaceRootFromDirectorySelection,
+    openWorkspace,
+    selectFile,
+    openActiveNode,
+    setEditorContent,
+    saveSelectedFile,
+    clearError,
+  } = useDeltaLeanState()
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
+    <div className="app-shell">
+      <WorkspaceToolbar
+        workspaceRoot={workspaceRoot}
+        isOpening={isOpeningWorkspace}
+        onWorkspaceRootChange={setWorkspaceRoot}
+        onDirectorySelect={setWorkspaceRootFromDirectorySelection}
+        onOpenWorkspace={() => {
+          void openWorkspace()
+        }}
+      />
+
+      {error && (
+        <div className="error-banner">
+          <span>{error}</span>
+          <button onClick={clearError}>Dismiss</button>
+        </div>
+      )}
+
+      <main className="main-layout">
+        <FileListPanel
+          files={files}
+          activeFilePath={activeFilePath}
+          diagnosticsMap={diagnosticsMap}
+          onSelectFile={selectFile}
+        />
+
+        <section className="world-area">
+          <WorldScene
+            activePath={activeFilePath}
+            status={activeFileStatus}
+            isOpened={isNodeOpened}
+            onOpenNode={() => {
+              void openActiveNode()
+            }}
+          />
+          <div className="world-status">Files: {files.length}</div>
+        </section>
+
+        <aside className="side-panel">
+          <EditorPanel
+            selectedPath={activeFilePath}
+            isOpened={isNodeOpened}
+            content={editorContent}
+            isLoadingFile={isLoadingFile}
+            isSaving={isSaving}
+            isDirty={isDirty}
+            onContentChange={setEditorContent}
+            onSave={() => {
+              void saveSelectedFile()
+            }}
+          />
+          <DiagnosticsPanel diagnostics={activeDiagnostics} selectedPath={activeFilePath} />
+        </aside>
+      </main>
+    </div>
   )
 }
 

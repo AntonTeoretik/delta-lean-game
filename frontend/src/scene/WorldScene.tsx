@@ -1,12 +1,12 @@
-import { Application, Container, FederatedPointerEvent, Graphics, Text, TextStyle } from 'pixi.js'
+import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js'
 import { useEffect, useRef } from 'react'
-import type { FileNode } from '../model/types'
+import type { NodeStatus } from '../model/types'
 
 interface WorldSceneProps {
-  nodes: FileNode[]
-  selectedPath: string | null
-  onSelectNode: (path: string) => void
-  onMoveNode: (path: string, x: number, y: number) => void
+  activePath: string | null
+  status: NodeStatus
+  isOpened: boolean
+  onOpenNode: () => void
 }
 
 const NODE_WIDTH = 190
@@ -33,7 +33,7 @@ function truncatePath(path: string): string {
   return `${path.slice(0, 14)}...${path.slice(-17)}`
 }
 
-export function WorldScene({ nodes, selectedPath, onSelectNode, onMoveNode }: WorldSceneProps) {
+export function WorldScene({ activePath, status, isOpened, onOpenNode }: WorldSceneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const appRef = useRef<Application | null>(null)
 
@@ -82,62 +82,44 @@ export function WorldScene({ nodes, selectedPath, onSelectNode, onMoveNode }: Wo
 
     app.stage.removeChildren()
 
-    nodes.forEach((node) => {
-      const container = new Container()
-      container.x = node.x
-      container.y = node.y
-      container.eventMode = 'static'
-      container.cursor = 'pointer'
+    if (!activePath) {
+      return
+    }
 
-      const background = new Graphics()
-      background.beginFill(statusColors[node.status])
-      background.lineStyle(
-        selectedPath === node.path ? 3 : 1,
-        selectedPath === node.path ? 0xe7f0ff : 0x4c596d,
-      )
-      background.drawRoundedRect(0, 0, NODE_WIDTH, NODE_HEIGHT, 12)
-      background.endFill()
-      container.addChild(background)
+    const canvasWidth = app.renderer.width
+    const canvasHeight = app.renderer.height
 
-      const label = new Text(truncatePath(node.path), textStyle)
-      label.x = 10
-      label.y = 10
-      container.addChild(label)
+    const container = new Container()
+    container.x = Math.max(20, (canvasWidth - NODE_WIDTH) / 2)
+    container.y = Math.max(20, (canvasHeight - NODE_HEIGHT) / 2)
+    container.eventMode = 'static'
+    container.cursor = 'pointer'
+    container.on('pointerdown', () => onOpenNode())
 
-      let dragging = false
-      let dragOffsetX = 0
-      let dragOffsetY = 0
+    const background = new Graphics()
+    background.beginFill(statusColors[status])
+    background.lineStyle(isOpened ? 3 : 1, isOpened ? 0xe7f0ff : 0x4c596d)
+    background.drawRoundedRect(0, 0, NODE_WIDTH, NODE_HEIGHT, 12)
+    background.endFill()
+    container.addChild(background)
 
-      container.on('pointerdown', (event: FederatedPointerEvent) => {
-        dragging = true
-        dragOffsetX = event.global.x - container.x
-        dragOffsetY = event.global.y - container.y
-        onSelectNode(node.path)
-      })
+    const label = new Text(truncatePath(activePath), textStyle)
+    label.x = 10
+    label.y = 10
+    container.addChild(label)
 
-      container.on('pointerup', () => {
-        dragging = false
-      })
-
-      container.on('pointerupoutside', () => {
-        dragging = false
-      })
-
-      container.on('pointermove', (event: FederatedPointerEvent) => {
-        if (!dragging) {
-          return
-        }
-
-        const nextX = Math.max(8, event.global.x - dragOffsetX)
-        const nextY = Math.max(8, event.global.y - dragOffsetY)
-        container.x = nextX
-        container.y = nextY
-        onMoveNode(node.path, nextX, nextY)
-      })
-
-      app.stage.addChild(container)
+    const hint = new Text(isOpened ? 'opened' : 'click to open', {
+      ...textStyle,
+      fontSize: 11,
+      fill: 0xbfd5f4,
+      wordWrap: false,
     })
-  }, [nodes, selectedPath, onMoveNode, onSelectNode])
+    hint.x = 10
+    hint.y = NODE_HEIGHT - 22
+    container.addChild(hint)
+
+    app.stage.addChild(container)
+  }, [activePath, status, isOpened, onOpenNode])
 
   return <div className="world-scene" ref={hostRef} />
 }

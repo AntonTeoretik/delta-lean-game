@@ -1,5 +1,6 @@
 interface EditorPanelProps {
   selectedPath: string | null
+  isOpened: boolean
   content: string
   isLoadingFile: boolean
   isSaving: boolean
@@ -10,6 +11,7 @@ interface EditorPanelProps {
 
 export function EditorPanel({
   selectedPath,
+  isOpened,
   content,
   isLoadingFile,
   isSaving,
@@ -19,6 +21,10 @@ export function EditorPanel({
 }: EditorPanelProps) {
   if (!selectedPath) {
     return <div className="panel-empty">Выберите узел в сцене, чтобы редактировать файл.</div>
+  }
+
+  if (!isOpened) {
+    return <div className="panel-empty">Нажмите на узел в центре, чтобы открыть код файла.</div>
   }
 
   return (

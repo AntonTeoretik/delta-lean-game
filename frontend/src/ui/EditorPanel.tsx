@@ -41,6 +41,13 @@ export function EditorPanel({
         value={content}
         onChange={(event) => onContentChange(event.target.value)}
         disabled={isLoadingFile}
+        spellCheck={false}
+        autoCorrect="off"
+        autoCapitalize="off"
+        data-gramm="false"
+        data-gramm_editor="false"
+        data-enable-grammarly="false"
+        translate="no"
       />
 
       <div className="panel-meta">

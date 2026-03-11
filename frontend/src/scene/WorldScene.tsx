@@ -72,6 +72,8 @@ export function WorldScene({
         background: '#0d121a',
         antialias: true,
         resizeTo: host,
+        resolution: window.devicePixelRatio || 1,
+        autoDensity: true,
       })
 
       if (!isMounted) {
@@ -221,6 +223,7 @@ export function WorldScene({
     container.addChild(background)
 
     const label = new Text(truncatePath(activePath), textStyle)
+    label.resolution = window.devicePixelRatio || 1
     label.x = 10
     label.y = 10
     container.addChild(label)
@@ -231,6 +234,7 @@ export function WorldScene({
       fill: 0xbfd5f4,
       wordWrap: false,
     })
+    hint.resolution = window.devicePixelRatio || 1
     hint.x = 10
     hint.y = NODE_HEIGHT - 22
     container.addChild(hint)

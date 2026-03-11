@@ -2,11 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { backendClient } from '../api/backendClient'
 import type { DiagnosticItem, FileDiagnostics, NodeStatus } from '../model/types'
 
+interface NodePosition {
+  x: number
+  y: number
+}
+
 interface DeltaLeanState {
   workspaceRoot: string
   files: string[]
   activeFilePath: string | null
   activeFileStatus: NodeStatus
+  activeNodePosition: NodePosition
   isNodeOpened: boolean
   editorContent: string
   activeDiagnostics: DiagnosticItem[]
@@ -24,6 +30,7 @@ interface DeltaLeanActions {
   openWorkspace: () => Promise<void>
   selectFile: (path: string) => void
   openActiveNode: () => Promise<void>
+  moveActiveNode: (x: number, y: number) => void
   setEditorContent: (value: string) => void
   saveSelectedFile: () => Promise<void>
   clearError: () => void
@@ -31,6 +38,7 @@ interface DeltaLeanActions {
 
 const AUTO_SAVE_DELAY_MS = 700
 const DIAGNOSTICS_POLL_MS = 1500
+const DEFAULT_NODE_POSITION: NodePosition = { x: 0, y: 0 }
 
 function mapDiagnostics(files: FileDiagnostics[]): Record<string, DiagnosticItem[]> {
   return files.reduce<Record<string, DiagnosticItem[]>>((acc, file) => {
@@ -59,6 +67,7 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
   const [workspaceRoot, setWorkspaceRoot] = useState('')
   const [files, setFiles] = useState<string[]>([])
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
+  const [nodePositions, setNodePositions] = useState<Record<string, NodePosition>>({})
   const [isNodeOpened, setIsNodeOpened] = useState(false)
   const [editorContent, setEditorContent] = useState('')
   const [lastSavedContent, setLastSavedContent] = useState('')
@@ -98,6 +107,13 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     () => statusFromDiagnostics(activeDiagnostics),
     [activeDiagnostics],
   )
+
+  const activeNodePosition = useMemo(() => {
+    if (!activeFilePath) {
+      return DEFAULT_NODE_POSITION
+    }
+    return nodePositions[activeFilePath] ?? DEFAULT_NODE_POSITION
+  }, [activeFilePath, nodePositions])
 
   const isDirty = activeFilePath !== null && isNodeOpened && editorContent !== lastSavedContent
 
@@ -171,6 +187,16 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
       await refreshDiagnostics(true)
       setFiles(paths)
       setActiveFilePath(paths[0] ?? null)
+      setNodePositions((previous) => {
+        const next: Record<string, NodePosition> = {}
+        paths.forEach((path, index) => {
+          next[path] = previous[path] ?? {
+            x: (index % 3) * 280 - 280,
+            y: Math.floor(index / 3) * 170 - 120,
+          }
+        })
+        return next
+      })
       setIsNodeOpened(false)
       setEditorContent('')
       setLastSavedContent('')
@@ -181,14 +207,14 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     }
   }
 
-  const selectFile = (path: string) => {
+  const selectFile = useCallback((path: string) => {
     setActiveFilePath(path)
     setIsNodeOpened(false)
     setEditorContent('')
     setLastSavedContent('')
-  }
+  }, [])
 
-  const openActiveNode = async () => {
+  const openActiveNode = useCallback(async () => {
     if (!activeFilePath) {
       return
     }
@@ -205,11 +231,23 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     } finally {
       setIsLoadingFile(false)
     }
-  }
+  }, [activeFilePath])
 
-  const saveSelectedFile = async () => {
+  const moveActiveNode = useCallback((x: number, y: number) => {
+    const path = activeFilePathRef.current
+    if (!path) {
+      return
+    }
+
+    setNodePositions((previous) => ({
+      ...previous,
+      [path]: { x, y },
+    }))
+  }, [])
+
+  const saveSelectedFile = useCallback(async () => {
     await persistActiveFile()
-  }
+  }, [persistActiveFile])
 
   useEffect(() => {
     if (!isDirty || !isNodeOpened || !activeFilePath) {
@@ -240,6 +278,7 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     files,
     activeFilePath,
     activeFileStatus,
+    activeNodePosition,
     isNodeOpened,
     editorContent,
     activeDiagnostics,
@@ -254,6 +293,7 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     openWorkspace,
     selectFile,
     openActiveNode,
+    moveActiveNode,
     setEditorContent,
     saveSelectedFile,
     clearError,

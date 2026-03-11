@@ -12,6 +12,7 @@ function App() {
     files,
     activeFilePath,
     activeFileStatus,
+    activeNodePosition,
     isNodeOpened,
     activeDiagnostics,
     diagnosticsMap,
@@ -26,6 +27,7 @@ function App() {
     openWorkspace,
     selectFile,
     openActiveNode,
+    moveActiveNode,
     setEditorContent,
     saveSelectedFile,
     clearError,
@@ -38,9 +40,7 @@ function App() {
         isOpening={isOpeningWorkspace}
         onWorkspaceRootChange={setWorkspaceRoot}
         onDirectorySelect={setWorkspaceRootFromDirectorySelection}
-        onOpenWorkspace={() => {
-          void openWorkspace()
-        }}
+        onOpenWorkspace={openWorkspace}
       />
 
       {error && (
@@ -62,10 +62,10 @@ function App() {
           <WorldScene
             activePath={activeFilePath}
             status={activeFileStatus}
+            nodePosition={activeNodePosition}
             isOpened={isNodeOpened}
-            onOpenNode={() => {
-              void openActiveNode()
-            }}
+            onOpenNode={openActiveNode}
+            onMoveNode={moveActiveNode}
           />
           <div className="world-status">Files: {files.length}</div>
         </section>
@@ -79,9 +79,7 @@ function App() {
             isSaving={isSaving}
             isDirty={isDirty}
             onContentChange={setEditorContent}
-            onSave={() => {
-              void saveSelectedFile()
-            }}
+            onSave={saveSelectedFile}
           />
           <DiagnosticsPanel diagnostics={activeDiagnostics} selectedPath={activeFilePath} />
         </aside>

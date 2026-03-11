@@ -32,7 +32,7 @@ export function EditorPanel({
       <div className="panel-header">
         <strong>{selectedPath}</strong>
         <button onClick={onSave} disabled={isSaving || isLoadingFile || !isDirty}>
-          {isSaving ? 'Saving...' : 'Save'}
+          {isSaving ? 'Saving...' : 'Save now'}
         </button>
       </div>
 
@@ -40,10 +40,12 @@ export function EditorPanel({
         className="editor-textarea"
         value={content}
         onChange={(event) => onContentChange(event.target.value)}
-        disabled={isLoadingFile || isSaving}
+        disabled={isLoadingFile}
       />
 
-      <div className="panel-meta">{isDirty ? 'Unsaved changes' : 'Saved'}</div>
+      <div className="panel-meta">
+        {isSaving ? 'Autosave in progress...' : isDirty ? 'Autosave pending...' : 'Autosaved'}
+      </div>
     </section>
   )
 }

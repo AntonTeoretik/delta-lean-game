@@ -1,3 +1,2 @@
-theorem bad : Prop := by
-  exact
-  exact
+theorem bad : True := by trivial
+

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { backendClient } from '../api/backendClient'
 import type { DiagnosticItem, FileDiagnostics, NodeStatus } from '../model/types'
 
@@ -28,6 +28,9 @@ interface DeltaLeanActions {
   saveSelectedFile: () => Promise<void>
   clearError: () => void
 }
+
+const AUTO_SAVE_DELAY_MS = 700
+const DIAGNOSTICS_POLL_MS = 1500
 
 function mapDiagnostics(files: FileDiagnostics[]): Record<string, DiagnosticItem[]> {
   return files.reduce<Record<string, DiagnosticItem[]>>((acc, file) => {
@@ -65,6 +68,27 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const activeFilePathRef = useRef<string | null>(null)
+  const editorContentRef = useRef('')
+  const isNodeOpenedRef = useRef(false)
+  const isSavingRef = useRef(false)
+
+  useEffect(() => {
+    activeFilePathRef.current = activeFilePath
+  }, [activeFilePath])
+
+  useEffect(() => {
+    editorContentRef.current = editorContent
+  }, [editorContent])
+
+  useEffect(() => {
+    isNodeOpenedRef.current = isNodeOpened
+  }, [isNodeOpened])
+
+  useEffect(() => {
+    isSavingRef.current = isSaving
+  }, [isSaving])
+
   const activeDiagnostics = useMemo(
     () => (activeFilePath ? diagnosticsMap[activeFilePath] ?? [] : []),
     [diagnosticsMap, activeFilePath],
@@ -99,6 +123,39 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     setWorkspaceRoot(root.replace(/\\/g, '/'))
   }
 
+  const refreshDiagnostics = useCallback(async (showError: boolean) => {
+    try {
+      const diagnostics = await backendClient.getDiagnostics()
+      setDiagnosticsMap(mapDiagnostics(diagnostics))
+    } catch (e) {
+      if (showError) {
+        setError(e instanceof Error ? e.message : 'Не удалось загрузить diagnostics.')
+      }
+    }
+  }, [])
+
+  const persistActiveFile = useCallback(async () => {
+    const path = activeFilePathRef.current
+    const content = editorContentRef.current
+    if (!path || !isNodeOpenedRef.current || isSavingRef.current) {
+      return
+    }
+
+    setIsSaving(true)
+    setError(null)
+    try {
+      await backendClient.updateFile(path, content)
+      if (activeFilePathRef.current === path) {
+        setLastSavedContent(content)
+      }
+      await refreshDiagnostics(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось сохранить файл.')
+    } finally {
+      setIsSaving(false)
+    }
+  }, [refreshDiagnostics])
+
   const openWorkspace = async () => {
     if (!workspaceRoot.trim()) {
       setError('Введите путь до workspace.')
@@ -110,13 +167,8 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
 
     try {
       await backendClient.openWorkspace(workspaceRoot.trim())
-      const [paths, diagnostics] = await Promise.all([
-        backendClient.listFiles(),
-        backendClient.getDiagnostics(),
-      ])
-
-      const mappedDiagnostics = mapDiagnostics(diagnostics)
-      setDiagnosticsMap(mappedDiagnostics)
+      const paths = await backendClient.listFiles()
+      await refreshDiagnostics(true)
       setFiles(paths)
       setActiveFilePath(paths[0] ?? null)
       setIsNodeOpened(false)
@@ -156,25 +208,32 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
   }
 
   const saveSelectedFile = async () => {
-    if (!activeFilePath || !isNodeOpened) {
+    await persistActiveFile()
+  }
+
+  useEffect(() => {
+    if (!isDirty || !isNodeOpened || !activeFilePath) {
       return
     }
 
-    setIsSaving(true)
-    setError(null)
-    try {
-      await backendClient.updateFile(activeFilePath, editorContent)
-      setLastSavedContent(editorContent)
+    const timer = window.setTimeout(() => {
+      void persistActiveFile()
+    }, AUTO_SAVE_DELAY_MS)
 
-      const diagnostics = await backendClient.getDiagnostics()
-      const mappedDiagnostics = mapDiagnostics(diagnostics)
-      setDiagnosticsMap(mappedDiagnostics)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось сохранить файл.')
-    } finally {
-      setIsSaving(false)
+    return () => window.clearTimeout(timer)
+  }, [activeFilePath, isDirty, isNodeOpened, editorContent, persistActiveFile])
+
+  useEffect(() => {
+    if (files.length === 0) {
+      return
     }
-  }
+
+    const interval = window.setInterval(() => {
+      void refreshDiagnostics(false)
+    }, DIAGNOSTICS_POLL_MS)
+
+    return () => window.clearInterval(interval)
+  }, [files.length, refreshDiagnostics])
 
   return {
     workspaceRoot,

@@ -1,8 +1,7 @@
 interface EditorPanelProps {
-  selectedPath: string | null
-  isOpened: boolean
+  selectedItemTitle: string | null
+  selectedFilePath: string | null
   content: string
-  isLoadingFile: boolean
   isSaving: boolean
   isDirty: boolean
   onContentChange: (value: string) => void
@@ -10,37 +9,33 @@ interface EditorPanelProps {
 }
 
 export function EditorPanel({
-  selectedPath,
-  isOpened,
+  selectedItemTitle,
+  selectedFilePath,
   content,
-  isLoadingFile,
   isSaving,
   isDirty,
   onContentChange,
   onSave,
 }: EditorPanelProps) {
-  if (!selectedPath) {
-    return <div className="panel-empty">Выберите узел в сцене, чтобы редактировать файл.</div>
-  }
-
-  if (!isOpened) {
-    return <div className="panel-empty">Нажмите на узел в центре, чтобы открыть код файла.</div>
+  if (!selectedItemTitle) {
+    return <div className="panel-empty">Выберите item в сцене, чтобы редактировать код.</div>
   }
 
   return (
     <section className="panel-block">
       <div className="panel-header">
-        <strong>{selectedPath}</strong>
-        <button onClick={onSave} disabled={isSaving || isLoadingFile || !isDirty}>
+        <strong>{selectedItemTitle}</strong>
+        <button onClick={onSave} disabled={isSaving || !isDirty}>
           {isSaving ? 'Saving...' : 'Save now'}
         </button>
       </div>
+
+      <div className="panel-meta">{selectedFilePath}</div>
 
       <textarea
         className="editor-textarea"
         value={content}
         onChange={(event) => onContentChange(event.target.value)}
-        disabled={isLoadingFile}
         spellCheck={false}
         autoCorrect="off"
         autoCapitalize="off"

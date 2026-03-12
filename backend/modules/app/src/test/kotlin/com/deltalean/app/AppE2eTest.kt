@@ -10,6 +10,7 @@ import com.deltalean.transport.api.ErrorResponse
 import com.deltalean.transport.api.FileContentResponse
 import com.deltalean.transport.api.FilesListResponse
 import com.deltalean.transport.api.OpenWorkspaceResponse
+import com.deltalean.transport.api.WorldSnapshotResponse
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -24,6 +25,8 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Comparator
@@ -33,6 +36,7 @@ import kotlin.io.path.writeText
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
 
 class AppE2eTest {
@@ -71,7 +75,7 @@ class AppE2eTest {
     coEvery { leanSession.stop() } returns Unit
 
     application {
-      deltaLeanApplication(WorkspaceSessionService { leanSession })
+      deltaLeanApplication(WorkspaceSessionService(sessionFactory = { leanSession }))
     }
 
     val openResponse = client.post("/api/workspace/open") {
@@ -113,6 +117,31 @@ class AppE2eTest {
     val diagnosticsAllDto = json.decodeFromString<DiagnosticsResponse>(diagnosticsAll.bodyAsText())
     assertEquals(1, diagnosticsAllDto.files.size)
 
+    Files.writeString(mainPath, "def replacedOnDisk : Nat := 2\n")
+
+    val worldResponse = client.get("/api/world")
+    assertEquals(HttpStatusCode.OK, worldResponse.status)
+    val worldDto = json.decodeFromString<WorldSnapshotResponse>(worldResponse.bodyAsText())
+    assertEquals(2, worldDto.files.size)
+    assertEquals(listOf("Main.lean", "Nested/Other.lean"), worldDto.files.map { it.path })
+    assertTrue(worldDto.files.all { it.items.isNotEmpty() })
+    val mainWorldFile = worldDto.files.first { it.path == "Main.lean" }
+    assertTrue(mainWorldFile.items.any { it.code.contains("theorem ok") })
+
+    val targetItemId = mainWorldFile.items.first().id
+    val encodedItemId = URLEncoder.encode(targetItemId, StandardCharsets.UTF_8).replace("+", "%20")
+    val updateItemResponse = client.put("/api/items/$encodedItemId/code") {
+      contentType(ContentType.Application.Json)
+      setBody("{\"code\":\"theorem changed : True := by\\n  trivial\"}")
+    }
+    assertEquals(HttpStatusCode.NoContent, updateItemResponse.status)
+
+    val updatedWorld = client.get("/api/world")
+    val updatedWorldDto = json.decodeFromString<WorldSnapshotResponse>(updatedWorld.bodyAsText())
+    val updatedMain = updatedWorldDto.files.first { it.path == "Main.lean" }
+    assertTrue(updatedMain.items.any { it.code.contains("theorem changed") })
+    assertTrue(Files.readString(mainPath).contains("theorem changed"))
+
     coVerify(exactly = 1) { leanSession.start(any()) }
     verify(exactly = 2) { leanSession.openFile(any(), any()) }
     verify(exactly = 1) { leanSession.updateFile(any(), badContent) }
@@ -121,7 +150,7 @@ class AppE2eTest {
   @Test
   fun `routes return bad request when workspace is not opened`() = testApplication {
     application {
-      deltaLeanApplication(WorkspaceSessionService { mockk(relaxed = true) })
+      deltaLeanApplication(WorkspaceSessionService(sessionFactory = { mockk(relaxed = true) }))
     }
 
     val filesResponse = client.get("/api/files")
@@ -133,6 +162,44 @@ class AppE2eTest {
     assertEquals(HttpStatusCode.BadRequest, diagnosticsResponse.status)
     val diagnosticsError = json.decodeFromString<ErrorResponse>(diagnosticsResponse.bodyAsText())
     assertEquals("Workspace is not opened", diagnosticsError.error)
+
+    val worldResponse = client.get("/api/world")
+    assertEquals(HttpStatusCode.BadRequest, worldResponse.status)
+    val worldError = json.decodeFromString<ErrorResponse>(worldResponse.bodyAsText())
+    assertEquals("Workspace is not opened", worldError.error)
+  }
+
+  @Test
+  fun `updating unknown item returns not found`() = testApplication {
+    val root = createWorkspace()
+    val leanSession = mockk<LeanSession>()
+    coEvery { leanSession.start(any()) } returns Unit
+    every { leanSession.openFile(any(), any()) } returns Unit
+    every { leanSession.updateFile(any(), any()) } returns Unit
+    every { leanSession.getAllDiagnostics() } returns emptyList()
+    every { leanSession.getDiagnosticsForPath(any()) } answers {
+      throw IllegalStateException("not used")
+    }
+    coEvery { leanSession.stop() } returns Unit
+
+    application {
+      deltaLeanApplication(WorkspaceSessionService(sessionFactory = { leanSession }))
+    }
+
+    val openResponse = client.post("/api/workspace/open") {
+      contentType(ContentType.Application.Json)
+      setBody("{\"rootPath\":\"${root.toString().replace("\\", "\\\\")}\"}")
+    }
+    assertEquals(HttpStatusCode.OK, openResponse.status)
+
+    val response = client.put("/api/items/missing-id/code") {
+      contentType(ContentType.Application.Json)
+      setBody("{\"code\":\"def x := 1\"}")
+    }
+
+    assertEquals(HttpStatusCode.NotFound, response.status)
+    val error = json.decodeFromString<ErrorResponse>(response.bodyAsText())
+    assertTrue(error.error.contains("Item is not found"))
   }
 
   private fun createWorkspace(): Path {

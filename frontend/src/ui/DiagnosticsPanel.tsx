@@ -1,26 +1,20 @@
-import type { DiagnosticItem } from '../model/types'
+import type { DiagnosticDto } from '../model/types'
 
 interface DiagnosticsPanelProps {
-  diagnostics: DiagnosticItem[]
-  selectedPath: string | null
+  diagnostics: DiagnosticDto[]
+  selectedItemTitle: string | null
 }
 
-function severityText(severity: number | null): string {
-  if (severity === 1 || severity === null) {
-    return 'error'
-  }
-  if (severity === 2) {
-    return 'warning'
-  }
-  return `severity:${severity}`
+function severityText(severity: string | null): string {
+  return severity?.toLowerCase() ?? 'error'
 }
 
-export function DiagnosticsPanel({ diagnostics, selectedPath }: DiagnosticsPanelProps) {
+export function DiagnosticsPanel({ diagnostics, selectedItemTitle }: DiagnosticsPanelProps) {
   return (
     <section className="panel-block diagnostics-block">
       <div className="panel-header">
         <strong>Diagnostics</strong>
-        <span>{selectedPath ?? 'No file selected'}</span>
+        <span>{selectedItemTitle ?? 'No item selected'}</span>
       </div>
 
       {diagnostics.length === 0 ? (

@@ -8,26 +8,25 @@ import {
   TextStyle,
 } from 'pixi.js'
 import { useEffect, useRef } from 'react'
-import type { NodeStatus } from '../model/types'
+import type { WorldNode } from '../model/types'
 import { createCameraController } from './camera'
 import { createGrid } from './grid'
 
 interface WorldSceneProps {
-  activePath: string | null
-  status: NodeStatus
-  nodePosition: { x: number; y: number }
-  isOpened: boolean
-  onOpenNode: () => void
-  onMoveNode: (x: number, y: number) => void
+  nodes: WorldNode[]
+  selectedItemId: string | null
+  onSelectItem: (id: string) => void
+  onMoveNode: (id: string, x: number, y: number) => void
 }
 
 const NODE_WIDTH = 230
 const NODE_HEIGHT = 96
 
 const statusColors = {
-  neutral: 0x2e3848,
-  warning: 0x8a6d1a,
-  error: 0x8f2c2c,
+  UNKNOWN: 0x2e3848,
+  OK: 0x1f5f3d,
+  WARNING: 0x8a6d1a,
+  ERROR: 0x8f2c2c,
 }
 
 const textStyle = new TextStyle({
@@ -38,25 +37,23 @@ const textStyle = new TextStyle({
   wordWrapWidth: NODE_WIDTH - 18,
 })
 
-function truncatePath(path: string): string {
-  if (path.length <= 34) {
-    return path
+function truncateLabel(title: string, filePath: string): string {
+  const base = `${title} (${filePath})`
+  if (base.length <= 36) {
+    return base
   }
-  return `${path.slice(0, 14)}...${path.slice(-17)}`
+  return `${base.slice(0, 16)}...${base.slice(-17)}`
 }
 
-export function WorldScene({
-  activePath,
-  status,
-  nodePosition,
-  isOpened,
-  onOpenNode,
-  onMoveNode,
-}: WorldSceneProps) {
+export function WorldScene({ nodes, selectedItemId, onSelectItem, onMoveNode }: WorldSceneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const appRef = useRef<Application | null>(null)
   const worldRef = useRef<Container | null>(null)
-  const nodeRef = useRef<Container | null>(null)
+  const nodesRef = useRef<WorldNode[]>([])
+
+  useEffect(() => {
+    nodesRef.current = nodes
+  }, [nodes])
 
   useEffect(() => {
     let isMounted = true
@@ -106,24 +103,22 @@ export function WorldScene({
         }
       }
 
-      const onPanStart = (event: PointerEvent) => {
-        if (event.button !== 0) {
-          return
-        }
-
-        const node = nodeRef.current
-        if (node) {
-          const canvasPoint = toLocalCanvasPoint(event.clientX, event.clientY)
-          const worldPoint = world.toLocal(new Point(canvasPoint.x, canvasPoint.y))
-          const isOnNode =
+      const isPointOnAnyNode = (clientX: number, clientY: number): boolean => {
+        const canvasPoint = toLocalCanvasPoint(clientX, clientY)
+        const worldPoint = world.toLocal(new Point(canvasPoint.x, canvasPoint.y))
+        return nodesRef.current.some((node) => {
+          return (
             worldPoint.x >= node.x &&
             worldPoint.x <= node.x + NODE_WIDTH &&
             worldPoint.y >= node.y &&
             worldPoint.y <= node.y + NODE_HEIGHT
+          )
+        })
+      }
 
-          if (isOnNode) {
-            return
-          }
+      const onPanStart = (event: PointerEvent) => {
+        if (event.button !== 0 || isPointOnAnyNode(event.clientX, event.clientY)) {
+          return
         }
 
         isPanning = true
@@ -157,9 +152,7 @@ export function WorldScene({
       window.addEventListener('pointercancel', onPanStop)
       app.canvas.addEventListener('wheel', onWheel, { passive: false })
 
-      app.ticker.add(() => {
-        camera.update()
-      })
+      app.ticker.add(() => camera.update())
 
       appRef.current = app
       worldRef.current = world
@@ -184,7 +177,6 @@ export function WorldScene({
       const app = appRef.current
       appRef.current = null
       worldRef.current = null
-      nodeRef.current = null
       if (app) {
         app.destroy(true)
       }
@@ -198,116 +190,103 @@ export function WorldScene({
       return
     }
 
-    const existingNode = nodeRef.current
-    if (existingNode) {
-      world.removeChild(existingNode)
-      existingNode.destroy({ children: true })
-      nodeRef.current = null
-    }
+    world.removeChildren()
+    world.addChild(createGrid())
 
-    if (!activePath) {
-      return
-    }
+    const cleanupCallbacks: Array<() => void> = []
 
-    const container = new Container()
-    container.x = nodePosition.x
-    container.y = nodePosition.y
-    container.eventMode = 'static'
-    container.cursor = 'default'
+    nodes.forEach((node) => {
+      const container = new Container()
+      container.x = node.x
+      container.y = node.y
+      container.eventMode = 'static'
+      container.cursor = 'default'
 
-    const background = new Graphics()
-    background.beginFill(statusColors[status])
-    background.lineStyle(isOpened ? 3 : 1, isOpened ? 0xe7f0ff : 0x4c596d)
-    background.drawRoundedRect(0, 0, NODE_WIDTH, NODE_HEIGHT, 12)
-    background.endFill()
-    container.addChild(background)
+      const background = new Graphics()
+      background.beginFill(statusColors[node.status])
+      const selected = node.id === selectedItemId
+      background.lineStyle(selected ? 3 : 1, selected ? 0xe7f0ff : 0x4c596d)
+      background.drawRoundedRect(0, 0, NODE_WIDTH, NODE_HEIGHT, 12)
+      background.endFill()
+      container.addChild(background)
 
-    const label = new Text(truncatePath(activePath), textStyle)
-    label.resolution = window.devicePixelRatio || 1
-    label.x = 10
-    label.y = 10
-    container.addChild(label)
+      const label = new Text(truncateLabel(node.title, node.filePath), textStyle)
+      label.resolution = window.devicePixelRatio || 1
+      label.x = 10
+      label.y = 10
+      container.addChild(label)
 
-    const hint = new Text(isOpened ? 'opened | drag me' : 'click to open | drag me', {
-      ...textStyle,
-      fontSize: 11,
-      fill: 0xbfd5f4,
-      wordWrap: false,
+      let dragging = false
+      let moved = false
+      let dragOffsetX = 0
+      let dragOffsetY = 0
+      let pendingX = container.x
+      let pendingY = container.y
+
+      const toWorldFromClient = (clientX: number, clientY: number) => {
+        const rect = app.canvas.getBoundingClientRect()
+        const canvasPoint = new Point(clientX - rect.left, clientY - rect.top)
+        return world.toLocal(canvasPoint)
+      }
+
+      const onWindowPointerMove = (event: PointerEvent) => {
+        if (!dragging) {
+          return
+        }
+
+        const local = toWorldFromClient(event.clientX, event.clientY)
+        const nextX = local.x - dragOffsetX
+        const nextY = local.y - dragOffsetY
+        if (Math.abs(nextX - container.x) > 1 || Math.abs(nextY - container.y) > 1) {
+          moved = true
+        }
+        container.x = nextX
+        container.y = nextY
+        pendingX = nextX
+        pendingY = nextY
+      }
+
+      const finishDrag = () => {
+        if (dragging && moved) {
+          onMoveNode(node.id, pendingX, pendingY)
+        }
+        dragging = false
+        window.removeEventListener('pointermove', onWindowPointerMove)
+        window.removeEventListener('pointerup', finishDrag)
+        window.removeEventListener('pointercancel', finishDrag)
+      }
+
+      container.on('pointerdown', (event: FederatedPointerEvent) => {
+        event.stopPropagation()
+        dragging = true
+        moved = false
+        const local = world.toLocal(event.global)
+        dragOffsetX = local.x - container.x
+        dragOffsetY = local.y - container.y
+        window.addEventListener('pointermove', onWindowPointerMove)
+        window.addEventListener('pointerup', finishDrag)
+        window.addEventListener('pointercancel', finishDrag)
+      })
+
+      container.on('pointertap', () => {
+        if (!moved) {
+          onSelectItem(node.id)
+        }
+      })
+
+      world.addChild(container)
+
+      cleanupCallbacks.push(() => {
+        window.removeEventListener('pointermove', onWindowPointerMove)
+        window.removeEventListener('pointerup', finishDrag)
+        window.removeEventListener('pointercancel', finishDrag)
+      })
     })
-    hint.resolution = window.devicePixelRatio || 1
-    hint.x = 10
-    hint.y = NODE_HEIGHT - 22
-    container.addChild(hint)
-
-    let dragging = false
-    let moved = false
-    let dragOffsetX = 0
-    let dragOffsetY = 0
-    let pendingX = container.x
-    let pendingY = container.y
-
-    const toWorldFromClient = (clientX: number, clientY: number) => {
-      const rect = app.canvas.getBoundingClientRect()
-      const canvasPoint = new Point(clientX - rect.left, clientY - rect.top)
-      return world.toLocal(canvasPoint)
-    }
-
-    const onWindowPointerMove = (event: PointerEvent) => {
-      if (!dragging) {
-        return
-      }
-
-      const local = toWorldFromClient(event.clientX, event.clientY)
-      const nextX = local.x - dragOffsetX
-      const nextY = local.y - dragOffsetY
-      if (Math.abs(nextX - container.x) > 1 || Math.abs(nextY - container.y) > 1) {
-        moved = true
-      }
-      container.x = nextX
-      container.y = nextY
-      pendingX = nextX
-      pendingY = nextY
-    }
-
-    container.on('pointerdown', (event: FederatedPointerEvent) => {
-      event.stopPropagation()
-      dragging = true
-      moved = false
-      const local = world.toLocal(event.global)
-      dragOffsetX = local.x - container.x
-      dragOffsetY = local.y - container.y
-      window.addEventListener('pointermove', onWindowPointerMove)
-      window.addEventListener('pointerup', finishDrag)
-      window.addEventListener('pointercancel', finishDrag)
-    })
-
-    const finishDrag = () => {
-      if (dragging && moved) {
-        onMoveNode(pendingX, pendingY)
-      }
-      dragging = false
-      window.removeEventListener('pointermove', onWindowPointerMove)
-      window.removeEventListener('pointerup', finishDrag)
-      window.removeEventListener('pointercancel', finishDrag)
-    }
-    container.on('pointerup', finishDrag)
-    container.on('pointerupoutside', finishDrag)
-
-    container.on('pointertap', () => {
-      if (!moved) {
-        onOpenNode()
-      }
-    })
-
-    world.addChild(container)
-    nodeRef.current = container
 
     return () => {
-      window.removeEventListener('pointermove', onWindowPointerMove)
-      window.removeEventListener('pointerup', finishDrag)
-      window.removeEventListener('pointercancel', finishDrag)
+      cleanupCallbacks.forEach((cleanup) => cleanup())
     }
-  }, [activePath, isOpened, nodePosition.x, nodePosition.y, onMoveNode, onOpenNode, status])
+  }, [nodes, onMoveNode, onSelectItem, selectedItemId])
 
   return <div className="world-scene" ref={hostRef} />
 }

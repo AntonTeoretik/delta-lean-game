@@ -1,34 +1,54 @@
-export type NodeStatus = 'neutral' | 'warning' | 'error'
+export type NodeStatus = 'UNKNOWN' | 'OK' | 'WARNING' | 'ERROR'
 
-export interface FileNode {
-  path: string
-  x: number
-  y: number
-  status: NodeStatus
-}
-
-export interface FileDocument {
-  path: string
-  content: string
-}
-
-export interface Position {
+export interface PositionDto {
   line: number
   character: number
 }
 
-export interface Range {
-  start: Position
-  end: Position
+export interface RangeDto {
+  start: PositionDto
+  end: PositionDto
 }
 
-export interface DiagnosticItem {
-  severity: number | null
+export interface DiagnosticDto {
+  severity: string | null
   message: string
-  range: Range
+  range: RangeDto
 }
 
-export interface FileDiagnostics {
+export interface ItemLayoutDto {
+  x: number
+  y: number
+}
+
+export interface WorldItemDto {
+  id: string
+  filePath: string
+  kind: string
+  name: string | null
+  title: string
+  code: string
+  status: NodeStatus
+  range: RangeDto | null
+  diagnostics: DiagnosticDto[]
+  layout: ItemLayoutDto | null
+}
+
+export interface WorldFileDto {
   path: string
-  diagnostics: DiagnosticItem[]
+  imports: string[]
+  items: WorldItemDto[]
+}
+
+export interface WorldSnapshotDto {
+  files: WorldFileDto[]
+}
+
+export interface WorldNode {
+  id: string
+  title: string
+  filePath: string
+  status: NodeStatus
+  x: number
+  y: number
 }

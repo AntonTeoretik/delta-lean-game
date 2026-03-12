@@ -1,6 +1,6 @@
 import './App.css'
 import { WorldScene } from './scene/WorldScene'
-import { useDeltaLeanState } from './state/useDeltaLeanState'
+import { diagnosticsForItem, useDeltaLeanState } from './state/useDeltaLeanState'
 import { DiagnosticsPanel } from './ui/DiagnosticsPanel'
 import { EditorPanel } from './ui/EditorPanel'
 import { FileListPanel } from './ui/FileListPanel'
@@ -9,27 +9,22 @@ import { WorkspaceToolbar } from './ui/WorkspaceToolbar'
 function App() {
   const {
     workspaceRoot,
-    files,
-    activeFilePath,
-    activeFileStatus,
-    activeNodePosition,
-    isNodeOpened,
-    activeDiagnostics,
-    diagnosticsMap,
+    nodes,
+    world,
+    selectedItemId,
+    selectedItem,
     editorContent,
     isOpeningWorkspace,
-    isLoadingFile,
     isSaving,
     isDirty,
     error,
     setWorkspaceRoot,
     setWorkspaceRootFromDirectorySelection,
     openWorkspace,
-    selectFile,
-    openActiveNode,
-    moveActiveNode,
+    selectItem,
+    moveNode,
     setEditorContent,
-    saveSelectedFile,
+    saveSelectedItem,
     clearError,
   } = useDeltaLeanState()
 
@@ -52,36 +47,35 @@ function App() {
 
       <main className="main-layout">
         <FileListPanel
-          files={files}
-          activeFilePath={activeFilePath}
-          diagnosticsMap={diagnosticsMap}
-          onSelectFile={selectFile}
+          items={world?.files.flatMap((file) => file.items) ?? []}
+          selectedItemId={selectedItemId}
+          onSelectItem={selectItem}
         />
 
         <section className="world-area">
           <WorldScene
-            activePath={activeFilePath}
-            status={activeFileStatus}
-            nodePosition={activeNodePosition}
-            isOpened={isNodeOpened}
-            onOpenNode={openActiveNode}
-            onMoveNode={moveActiveNode}
+            nodes={nodes}
+            selectedItemId={selectedItemId}
+            onSelectItem={selectItem}
+            onMoveNode={moveNode}
           />
-          <div className="world-status">Files: {files.length}</div>
+          <div className="world-status">Items: {nodes.length}</div>
         </section>
 
         <aside className="side-panel">
           <EditorPanel
-            selectedPath={activeFilePath}
-            isOpened={isNodeOpened}
+            selectedItemTitle={selectedItem?.title ?? null}
+            selectedFilePath={selectedItem?.filePath ?? null}
             content={editorContent}
-            isLoadingFile={isLoadingFile}
             isSaving={isSaving}
             isDirty={isDirty}
             onContentChange={setEditorContent}
-            onSave={saveSelectedFile}
+            onSave={saveSelectedItem}
           />
-          <DiagnosticsPanel diagnostics={activeDiagnostics} selectedPath={activeFilePath} />
+          <DiagnosticsPanel
+            diagnostics={diagnosticsForItem(selectedItem)}
+            selectedItemTitle={selectedItem?.title ?? null}
+          />
         </aside>
       </main>
     </div>

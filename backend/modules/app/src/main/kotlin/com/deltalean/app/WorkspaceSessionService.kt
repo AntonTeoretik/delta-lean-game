@@ -8,14 +8,22 @@ import com.deltalean.transport.api.FileDiagnosticsDto
 import com.deltalean.transport.api.OpenWorkspaceResponse
 import com.deltalean.transport.api.PositionDto
 import com.deltalean.transport.api.RangeDto
+import com.deltalean.transport.api.WorldSnapshotResponse
+import com.deltalean.transport.api.toResponse
+import com.deltalean.workspace.assembler.FileAssembler
 import com.deltalean.workspace.WorkspaceService
+import com.deltalean.workspace.loader.WorkspaceLoader
+import com.deltalean.workspace.session.WorkspaceSession
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 class WorkspaceSessionService(
-  private val sessionFactory: () -> LeanSession = { LeanSession() }
+  private val sessionFactory: () -> LeanSession = { LeanSession() },
+  private val workspaceLoader: WorkspaceLoader = WorkspaceLoader(),
+  private val fileAssembler: FileAssembler = FileAssembler(),
 ) {
   private val mutex = Mutex()
   private var active: ActiveWorkspace? = null
@@ -26,11 +34,13 @@ class WorkspaceSessionService(
     require(Files.isDirectory(workspaceRoot)) { "Workspace path must be a directory" }
 
     val workspaceService = WorkspaceService(workspaceRoot)
-    val leanFiles = workspaceService.listLeanFiles()
+    val worldSnapshot = workspaceLoader.loadWorkspace(workspaceRoot)
+    val worldSession = WorkspaceSession(workspaceRoot, worldSnapshot)
+    val leanFiles = worldSnapshot.files.map { it.path }
     val leanSession = sessionFactory()
 
     mutex.withLock {
-      active?.session?.stop()
+      active?.leanSession?.stop()
 
       try {
         leanSession.start(workspaceRoot)
@@ -43,7 +53,7 @@ class WorkspaceSessionService(
         throw IllegalStateException("Failed to start Lean session", e)
       }
 
-      active = ActiveWorkspace(workspaceService, leanSession)
+      active = ActiveWorkspace(workspaceService, leanSession, worldSession)
     }
 
     return OpenWorkspaceResponse(success = true, fileCount = leanFiles.size)
@@ -60,24 +70,64 @@ class WorkspaceSessionService(
   suspend fun updateFile(path: String, content: String) = mutex.withLock {
     val current = requireActive()
     current.workspace.writeFile(path, content)
-    current.session.updateFile(current.workspace.resolveRelativePath(path), content)
+    current.leanSession.updateFile(current.workspace.resolveRelativePath(path), content)
   }
 
   suspend fun getDiagnostics(path: String?): DiagnosticsResponse = mutex.withLock {
     val current = requireActive()
     if (path.isNullOrBlank()) {
-      val files = current.session.getAllDiagnostics().map { file ->
+      val files = current.leanSession.getAllDiagnostics().map { file ->
         FileDiagnosticsDto(path = file.path, diagnostics = file.diagnostics.map { it.toApiDto() })
       }
       return@withLock DiagnosticsResponse(files)
     }
 
-    val file = current.session.getDiagnosticsForPath(path)
+    val file = current.leanSession.getDiagnosticsForPath(path)
     DiagnosticsResponse(
       files = listOf(
         FileDiagnosticsDto(path = file.path, diagnostics = file.diagnostics.map { it.toApiDto() })
       )
     )
+  }
+
+  suspend fun getSession(): WorkspaceSession = mutex.withLock {
+    requireActive().worldSession
+  }
+
+  suspend fun getWorld(): WorldSnapshotResponse = mutex.withLock {
+    requireActive().worldSession.getWorld().toResponse()
+  }
+
+  suspend fun updateItemCode(itemId: String, code: String) = mutex.withLock {
+    val current = requireActive()
+    val worldSession = current.worldSession
+    val item = worldSession.getItem(itemId)
+      ?: throw NoSuchElementException("Item is not found: $itemId")
+
+    val snapshot = worldSession.getWorld()
+    val sourceFile = snapshot.files.firstOrNull { it.path == item.filePath }
+      ?: throw IllegalStateException("Source file not found for item: ${item.filePath}")
+
+    val updatedFile = sourceFile.copy(
+      items = sourceFile.items.map { existing ->
+        if (existing.id == itemId) {
+          existing.copy(code = code)
+        } else {
+          existing
+        }
+      }
+    )
+
+    val assembly = fileAssembler.assemble(updatedFile)
+    val filePath = current.workspace.resolveRelativePath(updatedFile.path)
+    Files.writeString(filePath, assembly.text, StandardCharsets.UTF_8)
+
+    val updatedSnapshot = snapshot.copy(
+      files = snapshot.files.map { file ->
+        if (file.path == updatedFile.path) updatedFile else file
+      }
+    )
+    worldSession.updateSnapshot(updatedSnapshot)
   }
 
   private fun requireActive(): ActiveWorkspace =
@@ -94,6 +144,7 @@ class WorkspaceSessionService(
 
   private data class ActiveWorkspace(
     val workspace: WorkspaceService,
-    val session: LeanSession
+    val leanSession: LeanSession,
+    val worldSession: WorkspaceSession,
   )
 }

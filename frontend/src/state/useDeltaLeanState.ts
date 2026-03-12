@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { backendClient } from '../api/backendClient'
-import type { DiagnosticItem, FileDiagnostics, NodeStatus } from '../model/types'
+import type { DiagnosticDto, NodeStatus, WorldItemDto, WorldNode, WorldSnapshotDto } from '../model/types'
 
 interface NodePosition {
   x: number
@@ -9,16 +9,12 @@ interface NodePosition {
 
 interface DeltaLeanState {
   workspaceRoot: string
-  files: string[]
-  activeFilePath: string | null
-  activeFileStatus: NodeStatus
-  activeNodePosition: NodePosition
-  isNodeOpened: boolean
+  world: WorldSnapshotDto | null
+  nodes: WorldNode[]
+  selectedItemId: string | null
+  selectedItem: WorldItemDto | null
   editorContent: string
-  activeDiagnostics: DiagnosticItem[]
-  diagnosticsMap: Record<string, DiagnosticItem[]>
   isOpeningWorkspace: boolean
-  isLoadingFile: boolean
   isSaving: boolean
   isDirty: boolean
   error: string | null
@@ -28,94 +24,73 @@ interface DeltaLeanActions {
   setWorkspaceRoot: (root: string) => void
   setWorkspaceRootFromDirectorySelection: (files: FileList | null) => void
   openWorkspace: () => Promise<void>
-  selectFile: (path: string) => void
-  openActiveNode: () => Promise<void>
-  moveActiveNode: (x: number, y: number) => void
+  selectItem: (id: string) => void
+  moveNode: (id: string, x: number, y: number) => void
   setEditorContent: (value: string) => void
-  saveSelectedFile: () => Promise<void>
+  saveSelectedItem: () => Promise<void>
   clearError: () => void
 }
 
-const AUTO_SAVE_DELAY_MS = 700
-const DIAGNOSTICS_POLL_MS = 1500
-const DEFAULT_NODE_POSITION: NodePosition = { x: 0, y: 0 }
+const DEFAULT_GRID_COLS = 4
 
-function mapDiagnostics(files: FileDiagnostics[]): Record<string, DiagnosticItem[]> {
-  return files.reduce<Record<string, DiagnosticItem[]>>((acc, file) => {
-    acc[file.path] = file.diagnostics
-    return acc
-  }, {})
+function flattenItems(world: WorldSnapshotDto | null): WorldItemDto[] {
+  if (!world) {
+    return []
+  }
+  return world.files.flatMap((file) => file.items)
 }
 
-function statusFromDiagnostics(diagnostics: DiagnosticItem[]): NodeStatus {
-  if (diagnostics.length === 0) {
-    return 'neutral'
+function toNodePosition(item: WorldItemDto, index: number, positions: Record<string, NodePosition>): NodePosition {
+  const remembered = positions[item.id]
+  if (remembered) {
+    return remembered
   }
 
-  if (diagnostics.some((item) => item.severity === null || item.severity === 1)) {
-    return 'error'
+  if (item.layout) {
+    return { x: item.layout.x, y: item.layout.y }
   }
 
-  if (diagnostics.some((item) => item.severity === 2)) {
-    return 'warning'
+  return {
+    x: (index % DEFAULT_GRID_COLS) * 280 - 280,
+    y: Math.floor(index / DEFAULT_GRID_COLS) * 180 - 140,
   }
-
-  return 'neutral'
 }
 
 export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
   const [workspaceRoot, setWorkspaceRoot] = useState('')
-  const [files, setFiles] = useState<string[]>([])
-  const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
-  const [nodePositions, setNodePositions] = useState<Record<string, NodePosition>>({})
-  const [isNodeOpened, setIsNodeOpened] = useState(false)
+  const [world, setWorld] = useState<WorldSnapshotDto | null>(null)
+  const [positions, setPositions] = useState<Record<string, NodePosition>>({})
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const [editorContent, setEditorContent] = useState('')
   const [lastSavedContent, setLastSavedContent] = useState('')
-  const [diagnosticsMap, setDiagnosticsMap] = useState<Record<string, DiagnosticItem[]>>({})
   const [isOpeningWorkspace, setIsOpeningWorkspace] = useState(false)
-  const [isLoadingFile, setIsLoadingFile] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const activeFilePathRef = useRef<string | null>(null)
-  const editorContentRef = useRef('')
-  const isNodeOpenedRef = useRef(false)
-  const isSavingRef = useRef(false)
+  const items = useMemo(() => flattenItems(world), [world])
 
-  useEffect(() => {
-    activeFilePathRef.current = activeFilePath
-  }, [activeFilePath])
-
-  useEffect(() => {
-    editorContentRef.current = editorContent
-  }, [editorContent])
-
-  useEffect(() => {
-    isNodeOpenedRef.current = isNodeOpened
-  }, [isNodeOpened])
-
-  useEffect(() => {
-    isSavingRef.current = isSaving
-  }, [isSaving])
-
-  const activeDiagnostics = useMemo(
-    () => (activeFilePath ? diagnosticsMap[activeFilePath] ?? [] : []),
-    [diagnosticsMap, activeFilePath],
+  const selectedItem = useMemo(
+    () => items.find((item) => item.id == selectedItemId) ?? null,
+    [items, selectedItemId],
   )
 
-  const activeFileStatus = useMemo(
-    () => statusFromDiagnostics(activeDiagnostics),
-    [activeDiagnostics],
+  const nodes = useMemo(
+    () =>
+      items.map((item, index) => {
+        const position = toNodePosition(item, index, positions)
+        return {
+          id: item.id,
+          title: item.title,
+          filePath: item.filePath,
+          status: item.status,
+          x: position.x,
+          y: position.y,
+        }
+      }),
+    [items, positions],
   )
 
-  const activeNodePosition = useMemo(() => {
-    if (!activeFilePath) {
-      return DEFAULT_NODE_POSITION
-    }
-    return nodePositions[activeFilePath] ?? DEFAULT_NODE_POSITION
-  }, [activeFilePath, nodePositions])
-
-  const isDirty = activeFilePath !== null && isNodeOpened && editorContent !== lastSavedContent
+  const isDirty = selectedItem !== null && editorContent != lastSavedContent
 
   const clearError = () => setError(null)
 
@@ -139,38 +114,26 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     setWorkspaceRoot(root.replace(/\\/g, '/'))
   }
 
-  const refreshDiagnostics = useCallback(async (showError: boolean) => {
-    try {
-      const diagnostics = await backendClient.getDiagnostics()
-      setDiagnosticsMap(mapDiagnostics(diagnostics))
-    } catch (e) {
-      if (showError) {
-        setError(e instanceof Error ? e.message : 'Не удалось загрузить diagnostics.')
-      }
-    }
-  }, [])
+  const loadWorld = async (keepSelectionId: string | null = null) => {
+    const nextWorld = await backendClient.getWorld()
+    setWorld(nextWorld)
 
-  const persistActiveFile = useCallback(async () => {
-    const path = activeFilePathRef.current
-    const content = editorContentRef.current
-    if (!path || !isNodeOpenedRef.current || isSavingRef.current) {
-      return
-    }
+    const nextItems = flattenItems(nextWorld)
+    const nextSelection =
+      (keepSelectionId && nextItems.find((item) => item.id === keepSelectionId)?.id) ??
+      nextItems[0]?.id ??
+      null
 
-    setIsSaving(true)
-    setError(null)
-    try {
-      await backendClient.updateFile(path, content)
-      if (activeFilePathRef.current === path) {
-        setLastSavedContent(content)
-      }
-      await refreshDiagnostics(false)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось сохранить файл.')
-    } finally {
-      setIsSaving(false)
+    setSelectedItemId(nextSelection)
+    if (nextSelection) {
+      const item = nextItems.find((it) => it.id === nextSelection)
+      setEditorContent(item?.code ?? '')
+      setLastSavedContent(item?.code ?? '')
+    } else {
+      setEditorContent('')
+      setLastSavedContent('')
     }
-  }, [refreshDiagnostics])
+  }
 
   const openWorkspace = async () => {
     if (!workspaceRoot.trim()) {
@@ -180,26 +143,9 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
 
     setIsOpeningWorkspace(true)
     setError(null)
-
     try {
       await backendClient.openWorkspace(workspaceRoot.trim())
-      const paths = await backendClient.listFiles()
-      await refreshDiagnostics(true)
-      setFiles(paths)
-      setActiveFilePath(paths[0] ?? null)
-      setNodePositions((previous) => {
-        const next: Record<string, NodePosition> = {}
-        paths.forEach((path, index) => {
-          next[path] = previous[path] ?? {
-            x: (index % 3) * 280 - 280,
-            y: Math.floor(index / 3) * 170 - 120,
-          }
-        })
-        return next
-      })
-      setIsNodeOpened(false)
-      setEditorContent('')
-      setLastSavedContent('')
+      await loadWorld(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось открыть workspace.')
     } finally {
@@ -207,95 +153,71 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     }
   }
 
-  const selectFile = useCallback((path: string) => {
-    setActiveFilePath(path)
-    setIsNodeOpened(false)
-    setEditorContent('')
-    setLastSavedContent('')
-  }, [])
+  const selectItem = (id: string) => {
+    setSelectedItemId(id)
+    const item = items.find((it) => it.id === id)
+    if (item) {
+      setEditorContent(item.code)
+      setLastSavedContent(item.code)
+    }
+  }
 
-  const openActiveNode = useCallback(async () => {
-    if (!activeFilePath) {
+  const moveNode = (id: string, x: number, y: number) => {
+    setPositions((previous) => ({
+      ...previous,
+      [id]: { x, y },
+    }))
+  }
+
+  const saveSelectedItem = async () => {
+    if (!selectedItemId) {
       return
     }
 
-    setIsLoadingFile(true)
+    setIsSaving(true)
     setError(null)
     try {
-      const file = await backendClient.getFile(activeFilePath)
-      setEditorContent(file.content)
-      setLastSavedContent(file.content)
-      setIsNodeOpened(true)
+      await backendClient.updateItemCode(selectedItemId, editorContent)
+      await loadWorld(selectedItemId)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось загрузить файл.')
+      setError(e instanceof Error ? e.message : 'Не удалось сохранить item.')
     } finally {
-      setIsLoadingFile(false)
+      setIsSaving(false)
     }
-  }, [activeFilePath])
-
-  const moveActiveNode = useCallback((x: number, y: number) => {
-    const path = activeFilePathRef.current
-    if (!path) {
-      return
-    }
-
-    setNodePositions((previous) => ({
-      ...previous,
-      [path]: { x, y },
-    }))
-  }, [])
-
-  const saveSelectedFile = useCallback(async () => {
-    await persistActiveFile()
-  }, [persistActiveFile])
-
-  useEffect(() => {
-    if (!isDirty || !isNodeOpened || !activeFilePath) {
-      return
-    }
-
-    const timer = window.setTimeout(() => {
-      void persistActiveFile()
-    }, AUTO_SAVE_DELAY_MS)
-
-    return () => window.clearTimeout(timer)
-  }, [activeFilePath, isDirty, isNodeOpened, editorContent, persistActiveFile])
-
-  useEffect(() => {
-    if (files.length === 0) {
-      return
-    }
-
-    const interval = window.setInterval(() => {
-      void refreshDiagnostics(false)
-    }, DIAGNOSTICS_POLL_MS)
-
-    return () => window.clearInterval(interval)
-  }, [files.length, refreshDiagnostics])
+  }
 
   return {
     workspaceRoot,
-    files,
-    activeFilePath,
-    activeFileStatus,
-    activeNodePosition,
-    isNodeOpened,
+    world,
+    nodes,
+    selectedItemId,
+    selectedItem,
     editorContent,
-    activeDiagnostics,
-    diagnosticsMap,
     isOpeningWorkspace,
-    isLoadingFile,
     isSaving,
     isDirty,
     error,
     setWorkspaceRoot,
     setWorkspaceRootFromDirectorySelection,
     openWorkspace,
-    selectFile,
-    openActiveNode,
-    moveActiveNode,
+    selectItem,
+    moveNode,
     setEditorContent,
-    saveSelectedFile,
+    saveSelectedItem,
     clearError,
   }
+}
+
+export function nodeStatusToUi(status: NodeStatus): 'neutral' | 'warning' | 'error' {
+  if (status === 'ERROR') {
+    return 'error'
+  }
+  if (status === 'WARNING') {
+    return 'warning'
+  }
+  return 'neutral'
+}
+
+export function diagnosticsForItem(item: WorldItemDto | null): DiagnosticDto[] {
+  return item?.diagnostics ?? []
 }

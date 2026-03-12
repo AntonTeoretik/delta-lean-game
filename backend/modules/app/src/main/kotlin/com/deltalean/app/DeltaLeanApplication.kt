@@ -27,6 +27,9 @@ fun Application.deltaLeanApplication(
     exception<NoSuchFileException> { call, cause ->
       call.respond(HttpStatusCode.NotFound, ErrorResponse(cause.message ?: "File not found"))
     }
+    exception<NoSuchElementException> { call, cause ->
+      call.respond(HttpStatusCode.NotFound, ErrorResponse(cause.message ?: "Not found"))
+    }
     exception<IllegalStateException> { call, cause ->
       call.respond(HttpStatusCode.BadRequest, ErrorResponse(cause.message ?: "Invalid state"))
     }

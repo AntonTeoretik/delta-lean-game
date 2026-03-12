@@ -1,32 +1,26 @@
-import type { DiagnosticItem } from '../model/types'
+import type { WorldItemDto } from '../model/types'
 
 interface FileListPanelProps {
-  files: string[]
-  activeFilePath: string | null
-  diagnosticsMap: Record<string, DiagnosticItem[]>
-  onSelectFile: (path: string) => void
+  items: WorldItemDto[]
+  selectedItemId: string | null
+  onSelectItem: (id: string) => void
 }
 
-export function FileListPanel({
-  files,
-  activeFilePath,
-  diagnosticsMap,
-  onSelectFile,
-}: FileListPanelProps) {
+export function FileListPanel({ items, selectedItemId, onSelectItem }: FileListPanelProps) {
   return (
     <aside className="file-list-panel">
-      <div className="file-list-title">Workspace files</div>
+      <div className="file-list-title">World items</div>
       <ul className="file-list">
-        {files.map((file) => {
-          const count = diagnosticsMap[file]?.length ?? 0
-          const hasError = (diagnosticsMap[file] ?? []).some((item) => item.severity === null || item.severity === 1)
+        {items.map((item) => {
+          const count = item.diagnostics.length
+          const hasError = item.status === 'ERROR'
           return (
-            <li key={file}>
+            <li key={item.id}>
               <button
-                className={`file-item ${activeFilePath === file ? 'active' : ''}`}
-                onClick={() => onSelectFile(file)}
+                className={`file-item ${selectedItemId === item.id ? 'active' : ''}`}
+                onClick={() => onSelectItem(item.id)}
               >
-                <span className="file-path">{file}</span>
+                <span className="file-path">{item.title}</span>
                 {count > 0 && <span className={hasError ? 'diag-badge error' : 'diag-badge'}>{count}</span>}
               </button>
             </li>

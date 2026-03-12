@@ -1,24 +1,8 @@
-import type { FileDiagnostics, FileDocument } from '../model/types'
+import type { WorldSnapshotDto } from '../model/types'
 
 interface OpenWorkspaceResponse {
   success: boolean
   fileCount: number
-}
-
-interface FilesListResponse {
-  files: string[]
-}
-
-interface DiagnosticsResponse {
-  files: FileDiagnostics[]
-}
-
-function toFilePathUrl(path: string): string {
-  const encodedPath = path
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/')
-  return `/api/files/${encodedPath}`
 }
 
 export class BackendClient {
@@ -35,26 +19,15 @@ export class BackendClient {
     })
   }
 
-  async listFiles(): Promise<string[]> {
-    const response = await this.requestJson<FilesListResponse>('/api/files')
-    return response.files
+  async getWorld(): Promise<WorldSnapshotDto> {
+    return this.requestJson<WorldSnapshotDto>('/api/world')
   }
 
-  async getFile(path: string): Promise<FileDocument> {
-    return this.requestJson<FileDocument>(toFilePathUrl(path))
-  }
-
-  async updateFile(path: string, content: string): Promise<void> {
-    await this.requestVoid(toFilePathUrl(path), {
+  async updateItemCode(id: string, code: string): Promise<void> {
+    await this.requestVoid(`/api/items/${encodeURIComponent(id)}/code`, {
       method: 'PUT',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ code }),
     })
-  }
-
-  async getDiagnostics(path?: string): Promise<FileDiagnostics[]> {
-    const query = path ? `?path=${encodeURIComponent(path)}` : ''
-    const response = await this.requestJson<DiagnosticsResponse>(`/api/diagnostics${query}`)
-    return response.files
   }
 
   private async requestJson<T>(path: string, init?: RequestInit): Promise<T> {

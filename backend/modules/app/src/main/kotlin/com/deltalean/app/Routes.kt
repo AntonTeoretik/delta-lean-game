@@ -4,6 +4,7 @@ import com.deltalean.transport.api.FileContentResponse
 import com.deltalean.transport.api.FileUpdateRequest
 import com.deltalean.transport.api.FilesListResponse
 import com.deltalean.transport.api.OpenWorkspaceRequest
+import com.deltalean.transport.api.UpdateItemCodeRequest
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
 import io.ktor.server.request.receive
@@ -44,9 +45,25 @@ fun Route.registerWorkspaceRoutes(service: WorkspaceSessionService) {
     val path = call.request.queryParameters["path"]
     call.respond(service.getDiagnostics(path))
   }
+
+  get("/api/world") {
+    call.respond(service.getWorld())
+  }
+
+  put("/api/items/{id}/code") {
+    val itemId = requirePathParameter(call.parameters["id"], "Missing item id")
+    val request = call.receive<UpdateItemCodeRequest>()
+    service.updateItemCode(itemId, request.code)
+    call.respond(HttpStatusCode.NoContent)
+  }
 }
 
 private fun requiredPath(pathSegments: List<String>?): String {
   require(!pathSegments.isNullOrEmpty()) { "Missing file path" }
   return pathSegments.joinToString("/")
+}
+
+private fun requirePathParameter(value: String?, message: String): String {
+  require(!value.isNullOrBlank()) { message }
+  return value
 }

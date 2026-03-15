@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { backendClient } from '../api/backendClient'
 import type { DiagnosticDto, NodeStatus, WorldItemDto, WorldNode, WorldSnapshotDto } from '../model/types'
 
@@ -32,6 +32,8 @@ interface DeltaLeanActions {
 }
 
 const DEFAULT_GRID_COLS = 4
+const AUTO_SAVE_DELAY_MS = 700
+const WORLD_POLL_MS = 1500
 
 function flattenItems(world: WorldSnapshotDto | null): WorldItemDto[] {
   if (!world) {
@@ -67,6 +69,18 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const selectedItemIdRef = useRef<string | null>(null)
+  const editorContentRef = useRef('')
+  const isDirtyRef = useRef(false)
+
+  useEffect(() => {
+    selectedItemIdRef.current = selectedItemId
+  }, [selectedItemId])
+
+  useEffect(() => {
+    editorContentRef.current = editorContent
+  }, [editorContent])
+
   const items = useMemo(() => flattenItems(world), [world])
 
   const selectedItem = useMemo(
@@ -90,8 +104,6 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     [items, positions],
   )
 
-  const isDirty = selectedItem !== null && editorContent != lastSavedContent
-
   const clearError = () => setError(null)
 
   const setWorkspaceRootFromDirectorySelection = (selectedFiles: FileList | null) => {
@@ -114,7 +126,14 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     setWorkspaceRoot(root.replace(/\\/g, '/'))
   }
 
-  const loadWorld = async (keepSelectionId: string | null = null) => {
+  const loadWorld = async (
+    keepSelectionId: string | null = null,
+    preserveDirtyDraft = false,
+  ) => {
+    const currentSelected = selectedItemIdRef.current
+    const currentDraft = editorContentRef.current
+    const currentlyDirty = isDirtyRef.current
+
     const nextWorld = await backendClient.getWorld()
     setWorld(nextWorld)
 
@@ -127,8 +146,17 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
     setSelectedItemId(nextSelection)
     if (nextSelection) {
       const item = nextItems.find((it) => it.id === nextSelection)
-      setEditorContent(item?.code ?? '')
-      setLastSavedContent(item?.code ?? '')
+      const nextCode = item?.code ?? ''
+      const shouldKeepDraft =
+        preserveDirtyDraft && currentlyDirty && currentSelected === nextSelection
+
+      if (shouldKeepDraft) {
+        setEditorContent(currentDraft)
+        setLastSavedContent(nextCode)
+      } else {
+        setEditorContent(nextCode)
+        setLastSavedContent(nextCode)
+      }
     } else {
       setEditorContent('')
       setLastSavedContent('')
@@ -170,21 +198,54 @@ export function useDeltaLeanState(): DeltaLeanState & DeltaLeanActions {
   }
 
   const saveSelectedItem = async () => {
-    if (!selectedItemId) {
+    if (!selectedItemIdRef.current) {
       return
     }
 
     setIsSaving(true)
     setError(null)
     try {
-      await backendClient.updateItemCode(selectedItemId, editorContent)
-      await loadWorld(selectedItemId)
+      const id = selectedItemIdRef.current
+      if (!id) {
+        return
+      }
+      await backendClient.updateItemCode(id, editorContentRef.current)
+      await loadWorld(id)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось сохранить item.')
     } finally {
       setIsSaving(false)
     }
   }
+
+  const isDirty = selectedItem !== null && editorContent != lastSavedContent
+  useEffect(() => {
+    isDirtyRef.current = isDirty
+  }, [isDirty])
+
+  useEffect(() => {
+    if (!isDirty || !selectedItemId || isSaving) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      void saveSelectedItem()
+    }, AUTO_SAVE_DELAY_MS)
+
+    return () => window.clearTimeout(timer)
+  }, [editorContent, isDirty, isSaving, saveSelectedItem, selectedItemId])
+
+  useEffect(() => {
+    if (!world) {
+      return
+    }
+
+    const interval = window.setInterval(() => {
+      void loadWorld(selectedItemIdRef.current, true)
+    }, WORLD_POLL_MS)
+
+    return () => window.clearInterval(interval)
+  }, [world])
 
   return {
     workspaceRoot,

@@ -19,16 +19,17 @@ class LeanSession(
   private val openedUris = ConcurrentHashMap.newKeySet<String>()
   private val diagnosticsByPath = ConcurrentHashMap<String, LeanFileDiagnostics>()
 
+  var onDiagnostics: ((String, List<Diagnostic>) -> Unit)? = null
+
   suspend fun start(workspaceRoot: Path) {
     val normalizedRoot = workspaceRoot.toAbsolutePath().normalize()
     this.workspaceRoot = normalizedRoot
     client.onDiagnostics = { params ->
       val relativePath = uriToRelativePath(params.uri)
       if (relativePath != null) {
-        diagnosticsByPath[relativePath] = LeanFileDiagnostics(
-          path = relativePath,
-          diagnostics = params.diagnostics
-        )
+        val fileDiagnostics = LeanFileDiagnostics(path = relativePath, diagnostics = params.diagnostics)
+        diagnosticsByPath[relativePath] = fileDiagnostics
+        onDiagnostics?.invoke(relativePath, fileDiagnostics.diagnostics)
       }
     }
     client.start(normalizedRoot)

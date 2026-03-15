@@ -1,1 +1,2 @@
-theorem bad : True := by trivial
+theorem bad : True := by 
+  trivial

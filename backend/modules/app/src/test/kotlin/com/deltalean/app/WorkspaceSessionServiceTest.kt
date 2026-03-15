@@ -42,6 +42,7 @@ class WorkspaceSessionServiceTest {
     root.resolve("Main.lean").writeText("def x : Nat := 1\n")
 
     val leanSession = mockk<LeanSession>()
+    every { leanSession.onDiagnostics = any() } answers { }
     coEvery { leanSession.start(any()) } returns Unit
     every { leanSession.openFile(any(), any()) } returns Unit
     every { leanSession.updateFile(any(), any()) } returns Unit
@@ -110,6 +111,7 @@ class WorkspaceSessionServiceTest {
 
   private fun relaxedLeanSession(): LeanSession {
     val leanSession = mockk<LeanSession>()
+    every { leanSession.onDiagnostics = any() } answers { }
     coEvery { leanSession.start(any()) } returns Unit
     every { leanSession.openFile(any(), any()) } returns Unit
     every { leanSession.updateFile(any(), any()) } returns Unit

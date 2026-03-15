@@ -35,7 +35,6 @@ class LeanLspClient(
 
     notificationsJob = scope.launch {
       rpc.notifications.collect { notification ->
-        println(notification)
         if (notification.method != "textDocument/publishDiagnostics") {
           return@collect
         }

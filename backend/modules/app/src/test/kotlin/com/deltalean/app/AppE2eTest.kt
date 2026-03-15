@@ -63,6 +63,7 @@ class AppE2eTest {
       )
     )
     val leanSession = mockk<LeanSession>()
+    every { leanSession.onDiagnostics = any() } answers { }
     coEvery { leanSession.start(any()) } returns Unit
     every { leanSession.openFile(any(), any()) } returns Unit
     every { leanSession.updateFile(any(), any()) } returns Unit
@@ -173,6 +174,7 @@ class AppE2eTest {
   fun `updating unknown item returns not found`() = testApplication {
     val root = createWorkspace()
     val leanSession = mockk<LeanSession>()
+    every { leanSession.onDiagnostics = any() } answers { }
     coEvery { leanSession.start(any()) } returns Unit
     every { leanSession.openFile(any(), any()) } returns Unit
     every { leanSession.updateFile(any(), any()) } returns Unit

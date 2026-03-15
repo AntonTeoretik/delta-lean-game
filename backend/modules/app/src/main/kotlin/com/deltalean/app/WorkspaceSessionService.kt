@@ -11,12 +11,20 @@ import com.deltalean.transport.api.RangeDto
 import com.deltalean.transport.api.WorldSnapshotResponse
 import com.deltalean.transport.api.toResponse
 import com.deltalean.workspace.assembler.FileAssembler
+import com.deltalean.workspace.diagnostics.DiagnosticService
 import com.deltalean.workspace.WorkspaceService
 import com.deltalean.workspace.loader.WorkspaceLoader
 import com.deltalean.workspace.session.WorkspaceSession
+import com.deltalean.domain.world.Diagnostic as WorldDiagnostic
+import com.deltalean.domain.world.TextPosition as WorldTextPosition
+import com.deltalean.domain.world.TextRange as WorldTextRange
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -24,7 +32,9 @@ class WorkspaceSessionService(
   private val sessionFactory: () -> LeanSession = { LeanSession() },
   private val workspaceLoader: WorkspaceLoader = WorkspaceLoader(),
   private val fileAssembler: FileAssembler = FileAssembler(),
+  private val diagnosticService: DiagnosticService = DiagnosticService(),
 ) {
+  private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
   private val mutex = Mutex()
   private var active: ActiveWorkspace? = null
 
@@ -38,6 +48,12 @@ class WorkspaceSessionService(
     val worldSession = WorkspaceSession(workspaceRoot, worldSnapshot)
     val leanFiles = worldSnapshot.files.map { it.path }
     val leanSession = sessionFactory()
+
+    leanSession.onDiagnostics = { filePath, diagnostics ->
+      scope.launch {
+        applyDiagnosticsFromLean(filePath, diagnostics.map { it.toDomainDiagnostic() })
+      }
+    }
 
     mutex.withLock {
       active?.leanSession?.stop()
@@ -98,6 +114,13 @@ class WorkspaceSessionService(
     requireActive().worldSession.getWorld().toResponse()
   }
 
+  private suspend fun applyDiagnosticsFromLean(filePath: String, diagnostics: List<WorldDiagnostic>) {
+    mutex.withLock {
+      val current = requireActive()
+      diagnosticService.applyDiagnostics(current.worldSession, filePath, diagnostics)
+    }
+  }
+
   suspend fun updateItemCode(itemId: String, code: String) = mutex.withLock {
     val current = requireActive()
     val worldSession = current.worldSession
@@ -121,6 +144,7 @@ class WorkspaceSessionService(
     val assembly = fileAssembler.assemble(updatedFile)
     val filePath = current.workspace.resolveRelativePath(updatedFile.path)
     Files.writeString(filePath, assembly.text, StandardCharsets.UTF_8)
+    current.leanSession.updateFile(filePath, assembly.text)
 
     val updatedSnapshot = snapshot.copy(
       files = snapshot.files.map { file ->
@@ -139,6 +163,21 @@ class WorkspaceSessionService(
     range = RangeDto(
       start = PositionDto(line = range.start.line, character = range.start.character),
       end = PositionDto(line = range.end.line, character = range.end.character)
+    )
+  )
+
+  private fun com.deltalean.lean.lsp.Diagnostic.toDomainDiagnostic(): WorldDiagnostic = WorldDiagnostic(
+    severity = when (severity) {
+      1 -> "error"
+      2 -> "warning"
+      3 -> "information"
+      4 -> "hint"
+      else -> null
+    },
+    message = message,
+    range = WorldTextRange(
+      start = WorldTextPosition(line = range.start.line, character = range.start.character),
+      end = WorldTextPosition(line = range.end.line, character = range.end.character),
     )
   )
 

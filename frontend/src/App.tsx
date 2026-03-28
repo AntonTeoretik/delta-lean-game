@@ -9,22 +9,19 @@ import { WorkspaceToolbar } from './ui/WorkspaceToolbar'
 function App() {
   const {
     workspaceRoot,
+    files,
+    selectedFilePath,
     nodes,
-    world,
+    containers,
     selectedItemId,
     selectedItem,
-    editorContent,
     isOpeningWorkspace,
-    isSaving,
-    isDirty,
     error,
     setWorkspaceRoot,
     setWorkspaceRootFromDirectorySelection,
     openWorkspace,
+    selectFile,
     selectItem,
-    moveNode,
-    setEditorContent,
-    saveSelectedItem,
     clearError,
   } = useDeltaLeanState()
 
@@ -47,17 +44,17 @@ function App() {
 
       <main className="main-layout">
         <FileListPanel
-          items={world?.files.flatMap((file) => file.items) ?? []}
-          selectedItemId={selectedItemId}
-          onSelectItem={selectItem}
+          files={files}
+          selectedFilePath={selectedFilePath}
+          onSelectFile={selectFile}
         />
 
         <section className="world-area">
           <WorldScene
             nodes={nodes}
+            containers={containers}
             selectedItemId={selectedItemId}
             onSelectItem={selectItem}
-            onMoveNode={moveNode}
           />
           <div className="world-status">Items: {nodes.length}</div>
         </section>
@@ -66,11 +63,8 @@ function App() {
           <EditorPanel
             selectedItemTitle={selectedItem?.title ?? null}
             selectedFilePath={selectedItem?.filePath ?? null}
-            content={editorContent}
-            isSaving={isSaving}
-            isDirty={isDirty}
-            onContentChange={setEditorContent}
-            onSave={saveSelectedItem}
+            selectedItemKind={selectedItem?.kind ?? null}
+            content={selectedItem?.code ?? ''}
           />
           <DiagnosticsPanel
             diagnostics={diagnosticsForItem(selectedItem)}

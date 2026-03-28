@@ -1,16 +1,20 @@
 package com.deltalean.workspace.importer
 
+import com.deltalean.domain.world.ContainerContext
+import com.deltalean.domain.world.ContainerKind
+import com.deltalean.domain.world.ContainerLayout
 import com.deltalean.domain.world.Diagnostic
 import com.deltalean.domain.world.ItemKind
 import com.deltalean.domain.world.ItemStatus
+import com.deltalean.domain.world.WorldContainer
 import com.deltalean.domain.world.WorldFile
 import com.deltalean.domain.world.WorldItem
 
 /**
- * Heuristic Lean splitter for MVP import flow.
+ * Heuristic Lean splitter for MVP import flow with container awareness.
  *
- * This is intentionally not a full parser. It extracts leading imports and splits the rest
- * into top-level declaration-like blocks. Unsupported or uncertain chunks are represented as RAW.
+ * This is intentionally not a full parser. It extracts leading imports, captures `namespace`/`section`
+ * as containers, stores contextual commands as container metadata, and emits declaration items.
  */
 class LeanFileSplitter {
   fun split(path: String, content: String): WorldFile {
@@ -30,108 +34,181 @@ class LeanFileSplitter {
       }
     }
 
-    val declarationStarts = mutableListOf<Int>()
-    for (lineIndex in bodyStartLine until lines.size) {
-      if (matchDeclarationKeyword(lines[lineIndex].trimmed) != null) {
-        declarationStarts += lineIndex
-      }
-    }
+    val rootContainerId = "$path#container-root"
+    val containers = mutableListOf(
+      MutableContainer(
+        id = rootContainerId,
+        kind = ContainerKind.FILE,
+        title = path,
+        filePath = path,
+        parentContainerId = null,
+        layout = ContainerLayout(x = 0.0, y = 0.0, width = 1400.0, height = 1000.0),
+      )
+    )
+    val containerById = hashMapOf(rootContainerId to containers.first())
+    val containerStack = ArrayDeque<String>().apply { addLast(rootContainerId) }
 
     val items = mutableListOf<WorldItem>()
     var itemIndex = 0
+    var containerIndex = 0
+    var chunkStartLine: Int? = null
+    var chunkKind: ChunkKind = ChunkKind.RAW
+    var chunkKeyword: String? = null
+    var chunkParentContainerId = rootContainerId
 
-    if (declarationStarts.isEmpty()) {
-      val rawCode = extractChunk(content, lines, bodyStartLine, lines.size)
-      if (rawCode.isNotBlank()) {
-        items += createItem(
-          path = path,
-          itemIndex = itemIndex,
-          kind = ItemKind.RAW,
-          name = null,
-          title = "raw",
-          code = rawCode,
-        )
+    fun currentContainer(): MutableContainer = containerById.getValue(containerStack.last())
+
+    fun startChunkIfNeeded(lineIndex: Int, kind: ChunkKind, keyword: String? = null) {
+      if (chunkStartLine == null) {
+        chunkStartLine = lineIndex
+        chunkKind = kind
+        chunkKeyword = keyword
+        chunkParentContainerId = containerStack.last()
       }
-      return WorldFile(path = path, imports = imports, items = items)
     }
 
-    var cursor = bodyStartLine
-    declarationStarts.forEachIndexed { startIndex, declarationStartLine ->
-      if (chunkHasContent(content, lines, cursor, declarationStartLine)) {
-        val rawCode = extractChunk(content, lines, cursor, declarationStartLine)
-        items += createItem(
-          path = path,
-          itemIndex = itemIndex++,
-          kind = ItemKind.RAW,
-          name = null,
-          title = "raw",
-          code = rawCode,
-        )
+    fun flushChunk(endLineExclusive: Int) {
+      val startLine = chunkStartLine ?: return
+      val chunkCode = extractChunk(content, lines, startLine, endLineExclusive)
+      if (chunkCode.isBlank()) {
+        chunkStartLine = null
+        chunkKeyword = null
+        chunkKind = ChunkKind.RAW
+        return
       }
 
-      val nextDeclarationStartLine = declarationStarts.getOrNull(startIndex + 1) ?: lines.size
-      val declarationEndLine = findDeclarationEndLine(
-        lines = lines,
-        declarationStartLine = declarationStartLine,
-        nextDeclarationStartLine = nextDeclarationStartLine,
-      )
-      val declarationCode = extractChunk(content, lines, declarationStartLine, declarationEndLine)
-      val keyword = matchDeclarationKeyword(lines[declarationStartLine].trimmed)
-      val kind = keyword?.let(::keywordToKind) ?: ItemKind.RAW
-      val name = if (keyword == null) null else extractName(lines[declarationStartLine].trimmed, keyword)
-      val title = when {
-        name != null -> name
-        kind == ItemKind.EXAMPLE -> "example"
-        kind == ItemKind.RAW -> "raw"
-        else -> keyword?.lowercase() ?: "raw"
+      val (kind, name, title) = when {
+        chunkKind == ChunkKind.DECLARATION && chunkKeyword != null -> {
+          val keyword = chunkKeyword!!
+          val firstTrimmed = lines[startLine].trimmed
+          val itemKind = keywordToKind(keyword)
+          val itemName = extractName(firstTrimmed, keyword)
+          val itemTitle = when {
+            itemName != null -> itemName
+            itemKind == ItemKind.EXAMPLE -> "example"
+            else -> keyword.lowercase()
+          }
+          Triple(itemKind, itemName, itemTitle)
+        }
+
+        else -> Triple(ItemKind.RAW, null, "raw")
       }
 
-      items += createItem(
-        path = path,
-        itemIndex = itemIndex++,
+      items += WorldItem(
+        id = "$path#item-$itemIndex",
+        filePath = path,
+        parentContainerId = chunkParentContainerId,
         kind = kind,
         name = name,
         title = title,
-        code = declarationCode,
+        code = chunkCode,
+        range = null,
+        status = ItemStatus.UNKNOWN,
+        diagnostics = emptyList<Diagnostic>(),
+        layout = null,
       )
+      itemIndex += 1
 
-      cursor = declarationEndLine
+      chunkStartLine = null
+      chunkKeyword = null
+      chunkKind = ChunkKind.RAW
     }
 
-    if (chunkHasContent(content, lines, cursor, lines.size)) {
-      val trailingRawCode = extractChunk(content, lines, cursor, lines.size)
-      items += createItem(
-        path = path,
-        itemIndex = itemIndex,
-        kind = ItemKind.RAW,
-        name = null,
-        title = "raw",
-        code = trailingRawCode,
-      )
+    for (lineIndex in bodyStartLine until lines.size) {
+      val line = lines[lineIndex]
+
+      if (chunkStartLine != null && chunkKind == ChunkKind.DECLARATION && isLooseTopLevelLine(line)) {
+        flushChunk(lineIndex)
+      }
+
+      val namespaceName = namespaceStartName(line.trimmed)
+      if (namespaceName != null) {
+        flushChunk(lineIndex)
+
+        val parentId = containerStack.last()
+        val childCount = containers.count { it.parentContainerId == parentId }
+        val id = "$path#container-${containerIndex++}"
+        val container = MutableContainer(
+          id = id,
+          kind = ContainerKind.NAMESPACE,
+          title = namespaceName.ifBlank { "namespace" },
+          filePath = path,
+          parentContainerId = parentId,
+          layout = ContainerLayout(
+            x = 30.0 + childCount * 20.0,
+            y = 40.0 + childCount * 24.0,
+            width = 980.0,
+            height = 680.0,
+          ),
+        )
+        containers += container
+        containerById[id] = container
+        containerStack.addLast(id)
+        continue
+      }
+
+      val sectionName = sectionStartName(line.trimmed)
+      if (sectionName != null) {
+        flushChunk(lineIndex)
+
+        val parentId = containerStack.last()
+        val childCount = containers.count { it.parentContainerId == parentId }
+        val id = "$path#container-${containerIndex++}"
+        val container = MutableContainer(
+          id = id,
+          kind = ContainerKind.SECTION,
+          title = sectionName.ifBlank { "section" },
+          filePath = path,
+          parentContainerId = parentId,
+          layout = ContainerLayout(
+            x = 40.0 + childCount * 18.0,
+            y = 52.0 + childCount * 22.0,
+            width = 920.0,
+            height = 620.0,
+          ),
+        )
+        containers += container
+        containerById[id] = container
+        containerStack.addLast(id)
+        continue
+      }
+
+      if (isEndLine(line.trimmed)) {
+        flushChunk(lineIndex)
+        if (containerStack.size > 1) {
+          containerStack.removeLast()
+        }
+        continue
+      }
+
+      val contextKind = contextKind(line.trimmed)
+      if (contextKind != null) {
+        flushChunk(lineIndex)
+        currentContainer().addContext(contextKind, line.text)
+        continue
+      }
+
+      val keyword = matchDeclarationKeyword(line.trimmed)
+      if (keyword != null) {
+        flushChunk(lineIndex)
+        startChunkIfNeeded(lineIndex, ChunkKind.DECLARATION, keyword)
+        continue
+      }
+
+      if (chunkStartLine == null && !line.trimmed.isBlank()) {
+        startChunkIfNeeded(lineIndex, ChunkKind.RAW)
+      }
     }
 
-    return WorldFile(path = path, imports = imports, items = items)
+    flushChunk(lines.size)
+
+    return WorldFile(
+      path = path,
+      imports = imports,
+      items = items,
+      containers = containers.map { it.toWorldContainer() },
+    )
   }
-
-  private fun createItem(
-    path: String,
-    itemIndex: Int,
-    kind: ItemKind,
-    name: String?,
-    title: String,
-    code: String,
-  ): WorldItem = WorldItem(
-    id = "$path#item-$itemIndex",
-    filePath = path,
-    kind = kind,
-    name = name,
-    title = title,
-    code = code,
-    range = null,
-    status = ItemStatus.UNKNOWN,
-    diagnostics = emptyList<Diagnostic>(),
-    layout = null,
-  )
 
   private fun keywordToKind(keyword: String): ItemKind = when (keyword.lowercase()) {
     "def" -> ItemKind.DEF
@@ -164,38 +241,52 @@ class LeanFileSplitter {
     return match.groupValues[1]
   }
 
-  private fun chunkHasContent(content: String, lines: List<LineInfo>, startLine: Int, endLine: Int): Boolean {
-    val chunk = extractChunk(content, lines, startLine, endLine)
-    return chunk.isNotBlank()
+  private fun namespaceStartName(trimmedLine: String): String? {
+    val match = NAMESPACE_START_REGEX.find(trimmedLine) ?: return null
+    return match.groupValues.getOrNull(1)?.trim().orEmpty()
   }
 
-  private fun findDeclarationEndLine(
-    lines: List<LineInfo>,
-    declarationStartLine: Int,
-    nextDeclarationStartLine: Int,
-  ): Int {
-    for (lineIndex in (declarationStartLine + 1) until nextDeclarationStartLine) {
-      val line = lines[lineIndex]
-      if (isLooseTopLevelLine(line)) {
-        return lineIndex
-      }
-    }
+  private fun sectionStartName(trimmedLine: String): String? {
+    val match = SECTION_START_REGEX.find(trimmedLine) ?: return null
+    return match.groupValues.getOrNull(1)?.trim().orEmpty()
+  }
 
-    return nextDeclarationStartLine
+  private fun isEndLine(trimmedLine: String): Boolean = END_REGEX.containsMatchIn(trimmedLine)
+
+  private fun contextKind(trimmedLine: String): ContextKind? {
+    return when {
+      trimmedLine.startsWith("variable ") || trimmedLine.startsWith("variables ") -> ContextKind.VARIABLE
+      trimmedLine.startsWith("open scoped ") -> ContextKind.OPEN_SCOPED
+      trimmedLine.startsWith("open ") -> ContextKind.OPEN
+      trimmedLine.startsWith("universe ") || trimmedLine.startsWith("universes ") -> ContextKind.UNIVERSE
+      trimmedLine.startsWith("set_option ") -> ContextKind.OPTION
+      trimmedLine.startsWith("attribute ") || trimmedLine.startsWith("local attribute ") -> ContextKind.ATTRIBUTE
+      trimmedLine.startsWith("notation ") || trimmedLine.startsWith("infix") || trimmedLine.startsWith("prefix") -> ContextKind.NOTATION
+      else -> null
+    }
   }
 
   private fun isLooseTopLevelLine(line: LineInfo): Boolean {
     if (line.trimmed.isBlank()) {
       return false
     }
-    if (line.hasLeadingWhitespace) {
+    val hasLeadingWhitespace = line.text.firstOrNull()?.isWhitespace() == true
+    if (hasLeadingWhitespace) {
       return false
     }
     if (line.trimmed.startsWith("--")) {
-      return true
+      return false
     }
-
-    return matchDeclarationKeyword(line.trimmed) == null
+    if (matchDeclarationKeyword(line.trimmed) != null) {
+      return false
+    }
+    if (namespaceStartName(line.trimmed) != null || sectionStartName(line.trimmed) != null || isEndLine(line.trimmed)) {
+      return false
+    }
+    if (contextKind(line.trimmed) != null) {
+      return false
+    }
+    return true
   }
 
   private fun extractChunk(content: String, lines: List<LineInfo>, startLine: Int, endLine: Int): String {
@@ -230,7 +321,6 @@ class LeanFileSplitter {
         text = lineText,
         trimmed = lineText.trimStart(),
         startOffset = start,
-        hasLeadingWhitespace = lineText.firstOrNull()?.isWhitespace() == true,
       )
     }
 
@@ -241,12 +331,76 @@ class LeanFileSplitter {
     val text: String,
     val trimmed: String,
     val startOffset: Int,
-    val hasLeadingWhitespace: Boolean,
   )
+
+  private data class MutableContainer(
+    val id: String,
+    val kind: ContainerKind,
+    val title: String,
+    val filePath: String,
+    val parentContainerId: String?,
+    val layout: ContainerLayout,
+    val variables: MutableList<String> = mutableListOf(),
+    val opens: MutableList<String> = mutableListOf(),
+    val openScoped: MutableList<String> = mutableListOf(),
+    val universes: MutableList<String> = mutableListOf(),
+    val options: MutableList<String> = mutableListOf(),
+    val attributes: MutableList<String> = mutableListOf(),
+    val notations: MutableList<String> = mutableListOf(),
+  ) {
+    fun addContext(kind: ContextKind, line: String) {
+      when (kind) {
+        ContextKind.VARIABLE -> variables += line
+        ContextKind.OPEN -> opens += line
+        ContextKind.OPEN_SCOPED -> openScoped += line
+        ContextKind.UNIVERSE -> universes += line
+        ContextKind.OPTION -> options += line
+        ContextKind.ATTRIBUTE -> attributes += line
+        ContextKind.NOTATION -> notations += line
+      }
+    }
+
+    fun toWorldContainer(): WorldContainer = WorldContainer(
+      id = id,
+      kind = kind,
+      title = title,
+      filePath = filePath,
+      parentContainerId = parentContainerId,
+      layout = layout,
+      context = ContainerContext(
+        variables = variables.toList(),
+        opens = opens.toList(),
+        openScoped = openScoped.toList(),
+        universes = universes.toList(),
+        options = options.toList(),
+        attributes = attributes.toList(),
+        notations = notations.toList(),
+      )
+    )
+  }
+
+  private enum class ChunkKind {
+    DECLARATION,
+    RAW,
+  }
+
+  private enum class ContextKind {
+    VARIABLE,
+    OPEN,
+    OPEN_SCOPED,
+    UNIVERSE,
+    OPTION,
+    ATTRIBUTE,
+    NOTATION,
+  }
 
   private companion object {
     val DECLARATION_START_REGEX =
       Regex("""^(def|theorem|inductive|structure|class|instance|axiom|abbrev|opaque|example)\b""")
+
+    val NAMESPACE_START_REGEX = Regex("""^namespace(?:\s+(.+))?$""")
+    val SECTION_START_REGEX = Regex("""^section(?:\s+(.+))?$""")
+    val END_REGEX = Regex("""^end\b""")
 
     val NAME_REGEX = Regex("""^([A-Za-z_][A-Za-z0-9_'.]*)""")
   }

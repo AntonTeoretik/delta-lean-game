@@ -78,13 +78,45 @@ data class WorldSnapshotResponse(
 data class WorldFileResponse(
   val path: String,
   val imports: List<String>,
+  val containers: List<WorldContainerResponse>,
   val items: List<WorldItemResponse>
+)
+
+@Serializable
+data class WorldContainerResponse(
+  val id: String,
+  val kind: String,
+  val title: String,
+  val filePath: String,
+  val parentContainerId: String?,
+  val layout: ContainerLayoutResponse,
+  val context: ContainerContextResponse
+)
+
+@Serializable
+data class ContainerLayoutResponse(
+  val x: Double,
+  val y: Double,
+  val width: Double,
+  val height: Double
+)
+
+@Serializable
+data class ContainerContextResponse(
+  val variables: List<String>,
+  val opens: List<String>,
+  val openScoped: List<String>,
+  val universes: List<String>,
+  val options: List<String>,
+  val attributes: List<String>,
+  val notations: List<String>
 )
 
 @Serializable
 data class WorldItemResponse(
   val id: String,
   val filePath: String,
+  val parentContainerId: String?,
   val kind: String,
   val name: String?,
   val title: String,
@@ -117,5 +149,7 @@ data class WorldDiagnosticResponse(
 @Serializable
 data class ItemLayoutResponse(
   val x: Double,
-  val y: Double
+  val y: Double,
+  val width: Double,
+  val height: Double
 )

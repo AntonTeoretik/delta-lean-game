@@ -19,11 +19,41 @@ export interface DiagnosticDto {
 export interface ItemLayoutDto {
   x: number
   y: number
+  width: number
+  height: number
+}
+
+export interface ContainerLayoutDto {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface ContainerContextDto {
+  variables: string[]
+  opens: string[]
+  openScoped: string[]
+  universes: string[]
+  options: string[]
+  attributes: string[]
+  notations: string[]
+}
+
+export interface WorldContainerDto {
+  id: string
+  kind: 'FILE' | 'NAMESPACE' | 'SECTION'
+  title: string
+  filePath: string
+  parentContainerId: string | null
+  layout: ContainerLayoutDto
+  context: ContainerContextDto
 }
 
 export interface WorldItemDto {
   id: string
   filePath: string
+  parentContainerId: string | null
   kind: string
   name: string | null
   title: string
@@ -37,6 +67,7 @@ export interface WorldItemDto {
 export interface WorldFileDto {
   path: string
   imports: string[]
+  containers: WorldContainerDto[]
   items: WorldItemDto[]
 }
 
@@ -48,7 +79,10 @@ export interface WorldNode {
   id: string
   title: string
   filePath: string
+  parentContainerId: string | null
   status: NodeStatus
   x: number
   y: number
+  width: number
+  height: number
 }

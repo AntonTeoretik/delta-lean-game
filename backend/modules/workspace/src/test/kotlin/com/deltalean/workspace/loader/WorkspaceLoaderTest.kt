@@ -94,7 +94,7 @@ class WorkspaceLoaderTest {
   }
 
   @Test
-  fun `preserves unknown chunks as raw`() {
+  fun `captures context commands in file container metadata`() {
     val root = createTempDirectory("workspace-loader-")
     roots.add(root)
     root.resolve("Main.lean").writeText(
@@ -103,11 +103,13 @@ class WorkspaceLoaderTest {
     )
 
     val snapshot = loader.loadWorkspace(root)
-    val items = snapshot.files.first().items
+    val file = snapshot.files.first()
+    val items = file.items
+    val rootContainer = file.containers.first { it.kind.name == "FILE" }
 
-    assertEquals(2, items.size)
-    assertEquals(ItemKind.RAW, items[0].kind)
-    assertEquals(ItemKind.DEF, items[1].kind)
+    assertEquals(1, items.size)
+    assertEquals(ItemKind.DEF, items[0].kind)
+    assertTrue(rootContainer.context.options.any { it.contains("set_option") })
   }
 
   private fun createTempWorkspace(): Path {

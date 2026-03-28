@@ -66,7 +66,7 @@ class LeanFileSplitterTest {
   }
 
   @Test
-  fun `unknown top-level text becomes raw`() {
+  fun `context command is captured on root container`() {
     val content =
       "set_option pp.universes true\n" +
         "\n" +
@@ -74,10 +74,10 @@ class LeanFileSplitterTest {
 
     val result = splitter.split(path = "Main.lean", content = content)
 
-    assertEquals(2, result.items.size)
-    assertEquals(ItemKind.RAW, result.items[0].kind)
-    assertTrue(result.items[0].code.contains("set_option"))
-    assertEquals(ItemKind.DEF, result.items[1].kind)
+    assertEquals(1, result.items.size)
+    assertEquals(ItemKind.DEF, result.items[0].kind)
+    val root = result.containers.first { it.kind.name == "FILE" }
+    assertTrue(root.context.options.any { it.contains("set_option") })
   }
 
   @Test
